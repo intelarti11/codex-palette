@@ -63,35 +63,15 @@ jobs:
           -p:PublishSingleFile=true
           -p:EnableCompressionInSingleFile=true
 
-      - name: Publish framework-dependent executable
-        run: >-
-          dotnet publish native/CodexPalette.Native/CodexPalette.Native.csproj
-          --configuration Release
-          --runtime win-x64
-          --self-contained false
-          --no-restore
-          --output artifacts/native-win-x64-runtime
-          -p:SelfContained=false
-          -p:PublishSingleFile=true
-          -p:IncludeNativeLibrariesForSelfExtract=false
-
-      - name: Name and measure executables
+      - name: Name and measure executable
         shell: pwsh
         run: |
           Rename-Item artifacts/native-win-x64/CodexPalette.exe CodexPalette.Portable.exe
-          Rename-Item artifacts/native-win-x64-runtime/CodexPalette.exe CodexPalette.Runtime.exe
-          Get-Item artifacts/native-win-x64/CodexPalette.Portable.exe,
-                   artifacts/native-win-x64-runtime/CodexPalette.Runtime.exe |
+          Get-Item artifacts/native-win-x64/CodexPalette.Portable.exe |
             Select-Object Name, Length
 
       - uses: actions/upload-artifact@v4
         with:
           name: CodexPalette-native-portable-win-x64
           path: artifacts/native-win-x64/CodexPalette.Portable.exe
-          if-no-files-found: error
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: CodexPalette-native-runtime-win-x64
-          path: artifacts/native-win-x64-runtime/CodexPalette.Runtime.exe
           if-no-files-found: error
