@@ -6,20 +6,27 @@ public sealed partial class CodexAutomationService
 {
     private static IReadOnlyList<string> GetTexts(AutomationElement element)
     {
-        var condition = new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Text);
-        var nodes = element.FindAll(TreeScope.Descendants, condition);
-        var values = new List<string>();
-
-        for (var index = 0; index < nodes.Count; index++)
+        try
         {
-            var value = TextNormalizer.Normalize(nodes[index].Current.Name);
-            if (!string.IsNullOrWhiteSpace(value) && !values.Contains(value, StringComparer.Ordinal))
-            {
-                values.Add(value);
-            }
-        }
+            var condition = new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Text);
+            var nodes = element.FindAll(TreeScope.Descendants, condition);
+            var values = new List<string>();
 
-        return values;
+            for (var index = 0; index < nodes.Count; index++)
+            {
+                var value = TextNormalizer.Normalize(nodes[index].Current.Name);
+                if (!string.IsNullOrWhiteSpace(value) && !values.Contains(value, StringComparer.Ordinal))
+                {
+                    values.Add(value);
+                }
+            }
+
+            return values;
+        }
+        catch
+        {
+            return Array.Empty<string>();
+        }
     }
 
     private static string GetLabel(AutomationElement element, bool effort)
@@ -93,7 +100,8 @@ public sealed partial class CodexAutomationService
 
     private sealed record MenuEntry(AutomationElement Item, double X, double Y, string Label);
     private sealed record MenuOptions(IReadOnlyList<AutomationElement> Items, IReadOnlyList<string> Labels);
-    private sealed record SpeedCandidate(AutomationElement Button, double Distance);
+    private sealed record MenuOptionCandidate(IReadOnlyList<MenuEntry> Entries, double Score);
+    private sealed record SpeedCandidate(AutomationElement Control, double Distance);
     private sealed record SpeedDescriptor(
         AutomationElement Owner,
         AutomationElement Control,
