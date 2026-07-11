@@ -104,4 +104,4 @@ Apache License 2.0. See [`LICENSE`](LICENSE).
 
 ## Silent selection
 
-Neither implementation calls `SetCursorPos`, `mouse_event`, `SetForegroundWindow`, or `AttachThreadInput`. They open and select native Codex controls through `ExpandCollapsePattern`, `InvokePattern`, `SelectionItemPattern`, and `LegacyIAccessiblePattern`. If Codex stops exposing a usable accessibility action after an update, the operation fails instead of falling back to physical input.
+Neither implementation calls `SetCursorPos`, `mouse_event`, `SetForegroundWindow`, or `AttachThreadInput`. They open and select native Codex controls through `ExpandCollapsePattern`, `InvokePattern`, and `SelectionItemPattern`. If Codex stops exposing a usable accessibility action after an update, the operation fails instead of falling back to physical input.
