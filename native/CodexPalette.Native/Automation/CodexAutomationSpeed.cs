@@ -9,16 +9,24 @@ public sealed partial class CodexAutomationService
         AutomationContext context,
         CancellationToken cancellationToken)
     {
-        foreach (var submenu in context.Submenus)
-        {
-            if (SameElement(submenu, context.ModelMenu) || SameElement(submenu, context.EffortMenu))
-            {
-                continue;
-            }
+        var candidates = context.Submenus
+            .Where(IsCollapsedPopupTrigger)
+            .Where(submenu =>
+                !SameElement(submenu, context.ModelMenu) &&
+                !SameElement(submenu, context.EffortMenu))
+            .ToArray();
 
+        foreach (var submenu in candidates)
+        {
             try
             {
-                var options = GetMenuOptions(processId, submenu, 2, 2, effort: false, cancellationToken);
+                var options = GetMenuOptions(
+                    processId,
+                    submenu,
+                    minimum: 2,
+                    maximum: 2,
+                    effort: false,
+                    cancellationToken);
                 if (options.Labels.Count == 2)
                 {
                     return NewSpeed(context.Selector, submenu, options);
@@ -30,57 +38,8 @@ public sealed partial class CodexAutomationService
             }
         }
 
-        CloseSilent(context.Selector);
-        var selector = FindElement(
-            processId,
-            ControlType.Button,
-            SelectorRegex().ToString(),
-            exact: false,
-            timeoutMilliseconds: 2500,
-            cancellationToken);
-        var selectorBounds = selector.Current.BoundingRectangle;
-        var centerX = selectorBounds.X + selectorBounds.Width / 2;
-        var centerY = selectorBounds.Y + selectorBounds.Height / 2;
-
-        var candidates = GetElements(processId)
-            .Where(control => !SameElement(control, selector) && TestVisible(control))
-            .Where(IsPopupTrigger)
-            .Select(control =>
-            {
-                var bounds = SafeBounds(control);
-                if (bounds.IsEmpty)
-                {
-                    return null;
-                }
-
-                var dx = Math.Abs(bounds.X + bounds.Width / 2 - centerX);
-                var dy = Math.Abs(bounds.Y + bounds.Height / 2 - centerY);
-                return dx <= 520 && dy <= 180
-                    ? new SpeedCandidate(control, dx + 3 * dy)
-                    : null;
-            })
-            .Where(static candidate => candidate is not null)
-            .Cast<SpeedCandidate>()
-            .OrderBy(static candidate => candidate.Distance)
-            .ToArray();
-
-        foreach (var candidate in candidates)
-        {
-            try
-            {
-                var options = GetMenuOptions(processId, candidate.Control, 2, 2, effort: false, cancellationToken);
-                if (options.Labels.Count == 2)
-                {
-                    return NewSpeed(candidate.Control, candidate.Control, options);
-                }
-            }
-            catch
-            {
-                CloseSilent(candidate.Control);
-            }
-        }
-
-        throw new AutomationUnavailableException("The native two-position speed selector is not exposed.");
+        throw new AutomationUnavailableException(
+            "The native two-position speed selector was not found inside the Codex selector popup.");
     }
 
     private static SpeedDescriptor NewSpeed(
