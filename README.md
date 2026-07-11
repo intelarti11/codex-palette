@@ -7,6 +7,7 @@ Codex Palette Overlay does not replace Codex and does not run a second chat clie
 ## Features
 
 - Visual matrix for model and reasoning-effort combinations.
+- Collapses automatically after a confirmed selection, with a manual collapse control.
 - Automatically aligns itself with the native Codex selector.
 - Drag from anywhere on the overlay to keep a custom offset.
 - Invokes native model and effort menu entries directly and verifies the final selection.

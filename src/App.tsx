@@ -3,6 +3,7 @@ import {
   ChevronDown,
   Flame,
   GripVertical,
+  Minus,
   Moon,
   RotateCcw,
   Sparkles,
@@ -143,6 +144,11 @@ export default function App() {
     onClickCapture: suppressClickAfterDrag,
   }
 
+  const collapse = useCallback(async () => {
+    setOpen(false)
+    await window.codexOverlay?.setOpen(false)
+  }, [])
+
   const toggle = useCallback(async () => {
     const next = !open
     setOpen(next)
@@ -157,12 +163,13 @@ export default function App() {
       setSelection(next)
       localStorage.setItem(storageKey, JSON.stringify(next))
       setNotice(`${models[next.modelIndex].name} · ${efforts[next.effortIndex]}`)
+      await collapse()
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Le sélecteur natif n’a pas répondu.')
     } finally {
       setBusy(false)
     }
-  }, [efforts])
+  }, [collapse, efforts])
 
   const resetPosition = useCallback(async () => {
     await window.codexOverlay?.resetPosition()
@@ -193,6 +200,9 @@ export default function App() {
           <div className="header-actions">
             <button type="button" onClick={() => void resetPosition()} aria-label="Reset position">
               <RotateCcw size={14} />
+            </button>
+            <button type="button" onClick={() => void collapse()} aria-label="Collapse palette">
+              <Minus size={15} />
             </button>
             <button type="button" onClick={() => void window.codexOverlay?.quit()} aria-label="Close overlay">
               <X size={15} />

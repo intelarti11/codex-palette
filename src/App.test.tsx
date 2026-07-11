@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
 import type { CodexOverlayBridge } from './types'
@@ -45,5 +45,30 @@ describe('Codex Palette Overlay', () => {
     fireEvent.click(screen.getByRole('button', { name: /5\.6 Sol/ }))
 
     expect(screen.getByRole('button', { name: '5.6 Luna, Ultra' })).toBeDisabled()
+  })
+
+  it('collapses from the header button', async () => {
+    render(<App />)
+
+    expect(await screen.findByText('Muy alto')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /5\.6 Sol/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse palette' }))
+
+    expect(screen.queryByRole('button', { name: 'Reset position' })).not.toBeInTheDocument()
+    expect(window.codexOverlay?.setOpen).toHaveBeenLastCalledWith(false)
+  })
+
+  it('collapses after Codex confirms a selection', async () => {
+    render(<App />)
+
+    expect(await screen.findByText('Muy alto')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /5\.6 Sol/ }))
+    fireEvent.click(screen.getByRole('button', { name: '5.6 Terra, Medio' }))
+
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: 'Reset position' })).not.toBeInTheDocument()
+    })
+    expect(window.codexOverlay?.apply).toHaveBeenCalledWith({ modelIndex: 1, effortIndex: 1 })
+    expect(window.codexOverlay?.setOpen).toHaveBeenLastCalledWith(false)
   })
 })
