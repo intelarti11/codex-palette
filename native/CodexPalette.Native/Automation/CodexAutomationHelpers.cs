@@ -32,7 +32,7 @@ public sealed partial class CodexAutomationService
     private static string GetLabel(AutomationElement element, bool effort)
     {
         var texts = GetTexts(element);
-        var value = texts.Count > 0 ? texts[0] : element.Current.Name;
+        var value = texts.Count > 0 ? texts[0] : SafeName(element);
         return TextNormalizer.Normalize(value, effort);
     }
 
@@ -90,18 +90,32 @@ public sealed partial class CodexAutomationService
         return leftKey is not null && string.Equals(leftKey, rightKey, StringComparison.Ordinal);
     }
 
+    private static void CloseContext(AutomationContext? context)
+    {
+        if (context is null)
+        {
+            return;
+        }
+
+        foreach (var submenu in context.Submenus.Reverse())
+        {
+            CloseSilent(submenu);
+        }
+        CloseSilent(context.Selector);
+    }
+
     private sealed record AutomationContext(
         AutomationElement Selector,
         string Model,
         string Effort,
         IReadOnlyList<AutomationElement> Submenus,
         AutomationElement ModelMenu,
-        AutomationElement EffortMenu);
+        AutomationElement EffortMenu,
+        AutomationElement? SpeedMenu);
 
     private sealed record MenuEntry(AutomationElement Item, double X, double Y, string Label);
     private sealed record MenuOptions(IReadOnlyList<AutomationElement> Items, IReadOnlyList<string> Labels);
     private sealed record MenuOptionCandidate(IReadOnlyList<MenuEntry> Entries, double Score);
-    private sealed record SpeedCandidate(AutomationElement Control, double Distance);
     private sealed record SpeedDescriptor(
         AutomationElement Owner,
         AutomationElement Control,
