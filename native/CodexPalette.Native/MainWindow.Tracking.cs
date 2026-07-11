@@ -9,10 +9,10 @@ public partial class MainWindow
 {
     private void Tracker_StateChanged(object? sender, CodexWindowState state)
     {
-        _ = Dispatcher.InvokeAsync(() => HandleTrackerStateAsync(state), DispatcherPriority.Normal);
+        _ = Dispatcher.InvokeAsync(() => HandleTrackerState(state), DispatcherPriority.Normal);
     }
 
-    private async Task HandleTrackerStateAsync(CodexWindowState state)
+    private void HandleTrackerState(CodexWindowState state)
     {
         if (state.SelectorBounds is Rect selectorBounds)
         {
@@ -37,12 +37,6 @@ public partial class MainWindow
         }
         Opacity = 1;
         Topmost = true;
-
-        if (DateTime.UtcNow - _lastNativeRefresh > TimeSpan.FromSeconds(3))
-        {
-            _lastNativeRefresh = DateTime.UtcNow;
-            await _viewModel.RefreshAsync();
-        }
     }
 
     private void SetOpen(bool open)
