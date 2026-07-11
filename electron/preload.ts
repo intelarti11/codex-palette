@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('codexOverlay', {
   endDrag: () => ipcRenderer.invoke('overlay:end-drag'),
   apply: (selection: { modelIndex: number; effortIndex: number }) =>
     ipcRenderer.invoke('overlay:apply', selection),
+  applySpeed: (speedIndex: number) => ipcRenderer.invoke('overlay:apply-speed', speedIndex),
   resetPosition: () => ipcRenderer.invoke('overlay:reset-position'),
   quit: () => ipcRenderer.invoke('overlay:quit'),
 })
