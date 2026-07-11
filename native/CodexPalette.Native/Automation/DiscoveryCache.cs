@@ -67,7 +67,7 @@ internal sealed class DiscoveryCache
                 .ToArray(),
             TextNormalizer.Normalize(value.SpeedLabel),
             value.Speeds
-                .Select(TextNormalizer.Normalize)
+                .Select(static label => TextNormalizer.Normalize(label))
                 .Where(static label => !string.IsNullOrWhiteSpace(label))
                 .Distinct(StringComparer.Ordinal)
                 .Take(2)
