@@ -186,7 +186,9 @@ public sealed partial class CodexAutomationService
     {
         try
         {
-            var nodes = container.FindAll(TreeScope.Descendants, Condition.TrueCondition);
+            var nodes = container.FindAll(
+                TreeScope.Descendants,
+                System.Windows.Automation.Condition.TrueCondition);
             var result = new List<AutomationElement>(nodes.Count);
             for (var index = 0; index < nodes.Count; index++)
             {
