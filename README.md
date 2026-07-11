@@ -26,7 +26,7 @@ The integration depends on accessibility names exposed by the current Codex desk
 ## Install
 
 1. Open the [latest GitHub Release](https://github.com/intelarti11/codex-palette/releases/latest).
-2. Download `Codex Palette Overlay Setup 0.3.0.exe`.
+2. Download `Codex.Palette.Overlay.Setup.0.3.0.exe`.
 3. Run the installer, then launch **Codex Palette Overlay** from the Windows Start menu.
 4. Open the official Codex app; the overlay will align itself with the native selector.
 
