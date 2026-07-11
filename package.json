@@ -1,0 +1,61 @@
+{
+  "name": "codex-palette",
+  "version": "0.1.0",
+  "private": true,
+  "description": "An unofficial desktop client for Codex App Server with a visual model and reasoning-effort selector.",
+  "author": "intelarti11",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "dist-electron/main.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "preview": "vite preview",
+    "dist": "npm run build && electron-builder"
+  },
+  "dependencies": {
+    "lucide-react": "^1.24.0",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@types/node": "^24.10.1",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.3",
+    "electron": "^43.1.0",
+    "electron-builder": "^26.15.3",
+    "jsdom": "^28.1.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.1.4",
+    "vite-plugin-electron": "^1.1.0",
+    "vitest": "^4.1.10"
+  },
+  "build": {
+    "appId": "dev.codexpalette.app",
+    "productName": "Codex Palette",
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*",
+      "package.json"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": "dmg"
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "linux": {
+      "target": "AppImage",
+      "category": "Development"
+    }
+  }
+}
