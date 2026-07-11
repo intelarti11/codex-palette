@@ -52,7 +52,7 @@ jobs:
         if: steps.native-tests.outcome == 'failure'
         run: exit 1
 
-      - name: Publish portable executable
+      - name: Publish self-contained portable executable
         run: >-
           dotnet publish native/CodexPalette.Native/CodexPalette.Native.csproj
           --configuration Release
@@ -61,13 +61,37 @@ jobs:
           --no-restore
           --output artifacts/native-win-x64
           -p:PublishSingleFile=true
+          -p:EnableCompressionInSingleFile=true
 
-      - name: Show executable size
+      - name: Publish framework-dependent executable
+        run: >-
+          dotnet publish native/CodexPalette.Native/CodexPalette.Native.csproj
+          --configuration Release
+          --runtime win-x64
+          --self-contained false
+          --no-restore
+          --output artifacts/native-win-x64-runtime
+          -p:SelfContained=false
+          -p:PublishSingleFile=true
+          -p:IncludeNativeLibrariesForSelfExtract=false
+
+      - name: Name and measure executables
         shell: pwsh
-        run: Get-Item artifacts/native-win-x64/CodexPalette.exe | Select-Object Name, Length
+        run: |
+          Rename-Item artifacts/native-win-x64/CodexPalette.exe CodexPalette.Portable.exe
+          Rename-Item artifacts/native-win-x64-runtime/CodexPalette.exe CodexPalette.Runtime.exe
+          Get-Item artifacts/native-win-x64/CodexPalette.Portable.exe,
+                   artifacts/native-win-x64-runtime/CodexPalette.Runtime.exe |
+            Select-Object Name, Length
 
       - uses: actions/upload-artifact@v4
         with:
-          name: CodexPalette-native-win-x64
-          path: artifacts/native-win-x64/CodexPalette.exe
+          name: CodexPalette-native-portable-win-x64
+          path: artifacts/native-win-x64/CodexPalette.Portable.exe
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CodexPalette-native-runtime-win-x64
+          path: artifacts/native-win-x64-runtime/CodexPalette.Runtime.exe
           if-no-files-found: error
