@@ -8,10 +8,14 @@ on:
     paths:
       - "native/**"
       - ".github/workflows/native-windows.yml"
+      - "README.md"
+      - "native/README.md"
   pull_request:
     paths:
       - "native/**"
       - ".github/workflows/native-windows.yml"
+      - "README.md"
+      - "native/README.md"
   workflow_dispatch:
 
 jobs:
