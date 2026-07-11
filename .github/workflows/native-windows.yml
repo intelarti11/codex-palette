@@ -31,7 +31,26 @@ jobs:
         run: dotnet restore native/CodexPalette.Native.sln
 
       - name: Test
-        run: dotnet test native/CodexPalette.Native.sln --configuration Release --no-restore
+        id: native-tests
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force artifacts/diagnostics | Out-Null
+          dotnet test native/CodexPalette.Native.sln --configuration Release --no-restore 2>&1 |
+            Tee-Object -FilePath artifacts/diagnostics/test.log
+          exit $LASTEXITCODE
+
+      - name: Upload test diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: CodexPalette-native-diagnostics
+          path: artifacts/diagnostics/test.log
+          if-no-files-found: error
+
+      - name: Stop after test failure
+        if: steps.native-tests.outcome == 'failure'
+        run: exit 1
 
       - name: Publish portable executable
         run: >-
