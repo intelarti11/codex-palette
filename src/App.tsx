@@ -3,6 +3,7 @@ import {
   ChevronDown,
   Flame,
   GripVertical,
+  Gauge,
   Minus,
   Moon,
   RotateCcw,
@@ -55,17 +56,34 @@ export default function App() {
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
   const [efforts, setEfforts] = useState<string[]>(fallbackEfforts)
+  const [speedLabel, setSpeedLabel] = useState('')
+  const [speeds, setSpeeds] = useState<string[]>([])
+  const [speedIndex, setSpeedIndex] = useState(-1)
   const dragState = useRef<DragState | null>(null)
   const dragFrame = useRef<number | null>(null)
   const lastDragEnd = useRef(0)
 
   useEffect(() => {
     let active = true
-    void window.codexOverlay?.getLabels().then((labels) => {
-      if (active && labels.efforts.length === 5) setEfforts(labels.efforts)
-    })
+    let retryTimer: number | null = null
+
+    const refreshLabels = async () => {
+      const labels = await window.codexOverlay?.getLabels()
+      if (!active || !labels) return
+      if (labels.efforts.length === 5) setEfforts(labels.efforts)
+      if (labels.speeds.length === 2) {
+        setSpeedLabel(labels.speedLabel)
+        setSpeeds(labels.speeds)
+        setSpeedIndex(labels.speedIndex)
+      } else {
+        retryTimer = window.setTimeout(() => void refreshLabels(), 2500)
+      }
+    }
+
+    void refreshLabels()
     return () => {
       active = false
+      if (retryTimer !== null) window.clearTimeout(retryTimer)
     }
   }, [])
 
@@ -171,6 +189,21 @@ export default function App() {
     }
   }, [collapse, efforts])
 
+  const applySpeed = useCallback(async (nextSpeedIndex: number) => {
+    if (nextSpeedIndex === speedIndex) return
+    setBusy(true)
+    setNotice(null)
+    try {
+      await window.codexOverlay?.applySpeed(nextSpeedIndex)
+      setSpeedIndex(nextSpeedIndex)
+      setNotice(speeds[nextSpeedIndex] ?? null)
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Le sélecteur natif n’a pas répondu.')
+    } finally {
+      setBusy(false)
+    }
+  }, [speedIndex, speeds])
+
   const resetPosition = useCallback(async () => {
     await window.codexOverlay?.resetPosition()
     setNotice(null)
@@ -245,6 +278,28 @@ export default function App() {
         </div>
 
         <footer className="palette-footer">
+          {speeds.length === 2 ? (
+            <div className="speed-control">
+              <span className="speed-title">
+                <Gauge size={13} />
+                {speedLabel ? <span>{speedLabel}</span> : null}
+              </span>
+              <div className="speed-segments" role="group" aria-label={speedLabel || speeds.join(' / ')}>
+                {speeds.map((speed, index) => (
+                  <button
+                    type="button"
+                    key={speed}
+                    className={speedIndex === index ? 'active' : ''}
+                    aria-pressed={speedIndex === index}
+                    disabled={busy}
+                    onClick={() => void applySpeed(index)}
+                  >
+                    {speed}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : <span />}
           {notice ? <span className="notice">{notice}</span> : null}
         </footer>
       </section>
