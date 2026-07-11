@@ -30,13 +30,6 @@ public sealed partial class CodexAutomationService
             return;
         }
 
-        if (TryGetPattern(element, LegacyIAccessiblePattern.Pattern, out var legacyValue))
-        {
-            ((LegacyIAccessiblePattern)legacyValue).DoDefaultAction();
-            Thread.Sleep(240);
-            return;
-        }
-
         throw new AutomationUnavailableException(
             $"The control '{element.Current.Name}' has no silent UI Automation action.");
     }
@@ -54,13 +47,6 @@ public sealed partial class CodexAutomationService
         if (TryGetPattern(element, SelectionItemPattern.Pattern, out var selectionValue))
         {
             ((SelectionItemPattern)selectionValue).Select();
-            Thread.Sleep(300);
-            return;
-        }
-
-        if (TryGetPattern(element, LegacyIAccessiblePattern.Pattern, out var legacyValue))
-        {
-            ((LegacyIAccessiblePattern)legacyValue).DoDefaultAction();
             Thread.Sleep(300);
             return;
         }
