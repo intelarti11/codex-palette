@@ -26,105 +26,57 @@ public sealed partial class CodexAutomationService
         var visibleBefore = GetVisibleRuntimeKeys(processId);
         OpenSilent(selector, cancellationToken);
 
-        var allVisible = GetElements(processId)
-            .Where(TestVisible)
-            .Where(element => !SameElement(element, selector))
-            .ToArray();
+        var deadline = DateTime.UtcNow.AddMilliseconds(900);
+        AutomationElement[] submenus = [];
+        while (DateTime.UtcNow < deadline)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var visible = GetElements(processId)
+                .Where(TestVisible)
+                .Where(element => !SameElement(element, selector))
+                .Where(IsPopupTrigger)
+                .Where(element => IsNearSelectorPopup(element, selector))
+                .ToArray();
 
-        var revealed = allVisible
-            .Where(element =>
+            var revealed = visible.Where(element =>
             {
                 var key = GetRuntimeKey(element);
                 return key is null || !visibleBefore.Contains(key);
-            })
-            .Where(IsCollapsedPopupTrigger)
-            .Where(element => IsNearSelectorPopup(element, selector))
-            .ToArray();
+            }).ToArray();
 
-        var submenus = (revealed.Length > 0
-                ? revealed
-                : allVisible
-                    .Where(IsCollapsedPopupTrigger)
-                    .Where(element => IsNearSelectorPopup(element, selector)))
-            .OrderBy(element => SafeBounds(element).Y)
-            .ThenBy(element => SafeBounds(element).X)
-            .ToArray();
+            submenus = (revealed.Length >= 2 ? revealed : visible)
+                .OrderBy(element => SafeBounds(element).Y)
+                .ThenBy(element => SafeBounds(element).X)
+                .ToArray();
+            if (submenus.Length >= 2)
+            {
+                break;
+            }
+
+            Thread.Sleep(30);
+        }
 
         var modelMenu = submenus.FirstOrDefault(element => ElementContains(element, model));
         var effortMenu = submenus.FirstOrDefault(element =>
             !SameElement(element, modelMenu) && ElementContains(element, effort));
-
-        if (modelMenu is null || effortMenu is null)
-        {
-            DiscoverSubmenusByStructure(
-                processId,
-                submenus,
-                model,
-                effort,
-                ref modelMenu,
-                ref effortMenu,
-                cancellationToken);
-        }
+        var speedMenu = submenus.FirstOrDefault(element =>
+            !SameElement(element, modelMenu) && !SameElement(element, effortMenu));
 
         if (modelMenu is null || effortMenu is null)
         {
             CloseSilent(selector);
             throw new AutomationUnavailableException(
-                "The native model or reasoning submenu is not exposed through UI Automation patterns.");
+                "The native model or effort selector is not exposed through ExpandCollapsePattern.");
         }
 
-        return new AutomationContext(selector, model, effort, submenus, modelMenu, effortMenu);
-    }
-
-    private static void DiscoverSubmenusByStructure(
-        int processId,
-        IReadOnlyList<AutomationElement> candidates,
-        string model,
-        string effort,
-        ref AutomationElement? modelMenu,
-        ref AutomationElement? effortMenu,
-        CancellationToken cancellationToken)
-    {
-        foreach (var candidate in candidates.Where(IsCollapsedPopupTrigger))
-        {
-            if (modelMenu is not null && effortMenu is not null)
-            {
-                return;
-            }
-
-            try
-            {
-                var options = GetMenuOptions(
-                    processId,
-                    candidate,
-                    minimum: 2,
-                    maximum: 10,
-                    effort: false,
-                    cancellationToken);
-
-                if (modelMenu is null && options.Labels.Any(label =>
-                        string.Equals(label, model, StringComparison.Ordinal)))
-                {
-                    modelMenu = candidate;
-                }
-                else if (effortMenu is null && options.Labels.Any(label =>
-                             string.Equals(
-                                 TextNormalizer.Normalize(label, effort: true),
-                                 TextNormalizer.Normalize(effort, effort: true),
-                                 StringComparison.Ordinal)))
-                {
-                    effortMenu = candidate;
-                }
-            }
-            catch
-            {
-                // The candidate belongs to the selector popup but is not model or effort.
-            }
-            finally
-            {
-                CloseSilent(candidate);
-            }
-        }
+        return new AutomationContext(
+            selector,
+            model,
+            effort,
+            submenus,
+            modelMenu,
+            effortMenu,
+            speedMenu);
     }
 
     private static MenuOptions GetMenuOptions(
@@ -139,69 +91,60 @@ public sealed partial class CodexAutomationService
         var visibleBefore = GetVisibleRuntimeKeys(processId);
         var submenuBounds = SafeBounds(submenu);
         OpenSilent(submenu, cancellationToken);
-        var deadline = DateTime.UtcNow.AddMilliseconds(1600);
+        var deadline = DateTime.UtcNow.AddMilliseconds(1100);
 
-        try
+        while (DateTime.UtcNow < deadline)
         {
-            while (DateTime.UtcNow < deadline)
+            cancellationToken.ThrowIfCancellationRequested();
+            var visible = GetElements(processId).Where(TestVisible).ToArray();
+            var newEntries = BuildMenuEntries(
+                visible.Where(element =>
+                {
+                    var key = GetRuntimeKey(element);
+                    return (key is null || !visibleBefore.Contains(key)) &&
+                           IsNearSubmenuPopup(element, submenuBounds);
+                }),
+                effort);
+
+            if (newEntries.Count >= minimum && newEntries.Count <= maximum)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                var visible = GetElements(processId).Where(TestVisible).ToArray();
-
-                var newlyVisibleEntries = BuildMenuEntries(
-                    visible.Where(element =>
-                    {
-                        var key = GetRuntimeKey(element);
-                        return (key is null || !visibleBefore.Contains(key)) &&
-                               IsNearSubmenuPopup(element, submenuBounds);
-                    }),
-                    effort);
-
-                if (newlyVisibleEntries.Count >= minimum && newlyVisibleEntries.Count <= maximum)
-                {
-                    return ToMenuOptions(newlyVisibleEntries);
-                }
-
-                var candidates = new List<MenuOptionCandidate>();
-                foreach (var container in visible.Where(IsPopupContainer))
-                {
-                    var bounds = SafeBounds(container);
-                    if (!IsNearSubmenuPopup(bounds, submenuBounds))
-                    {
-                        continue;
-                    }
-
-                    var entries = BuildMenuEntries(
-                        GetDescendants(container).Where(element =>
-                            IsNearSubmenuPopup(element, submenuBounds)),
-                        effort);
-                    if (entries.Count < minimum || entries.Count > maximum)
-                    {
-                        continue;
-                    }
-
-                    var key = GetRuntimeKey(container);
-                    var isNew = key is null || !visibleBefore.Contains(key);
-                    var score = ScoreContainer(bounds, submenuBounds, isNew, GetAutomationId(container));
-                    candidates.Add(new MenuOptionCandidate(entries, score));
-                }
-
-                var best = candidates.OrderBy(static candidate => candidate.Score).FirstOrDefault();
-                if (best is not null)
-                {
-                    return ToMenuOptions(best.Entries);
-                }
-
-                Thread.Sleep(35);
+                return ToMenuOptions(newEntries);
             }
-        }
-        catch
-        {
-            CloseSilent(submenu);
-            throw;
+
+            var candidates = new List<MenuOptionCandidate>();
+            foreach (var container in visible.Where(IsPopupContainer))
+            {
+                var bounds = SafeBounds(container);
+                if (!IsNearSubmenuPopup(bounds, submenuBounds))
+                {
+                    continue;
+                }
+
+                var entries = BuildMenuEntries(
+                    GetDescendants(container).Where(element =>
+                        IsNearSubmenuPopup(element, submenuBounds)),
+                    effort);
+                if (entries.Count < minimum || entries.Count > maximum)
+                {
+                    continue;
+                }
+
+                var key = GetRuntimeKey(container);
+                var isNew = key is null || !visibleBefore.Contains(key);
+                candidates.Add(new MenuOptionCandidate(
+                    entries,
+                    ScoreContainer(bounds, submenuBounds, isNew, GetAutomationId(container))));
+            }
+
+            var best = candidates.OrderBy(static candidate => candidate.Score).FirstOrDefault();
+            if (best is not null)
+            {
+                return ToMenuOptions(best.Entries);
+            }
+
+            Thread.Sleep(30);
         }
 
-        CloseSilent(submenu);
         throw new AutomationUnavailableException("The submenu options are not exposed.");
     }
 
@@ -299,7 +242,7 @@ public sealed partial class CodexAutomationService
 
         var dx = Math.Abs(candidate.X + candidate.Width / 2 - (anchor.X + anchor.Width / 2));
         var dy = Math.Abs(candidate.Y + candidate.Height / 2 - (anchor.Y + anchor.Height / 2));
-        return dx <= 560 && dy <= 620;
+        return dx <= 420 && dy <= 520;
     }
 
     private static bool IsNearSubmenuPopup(AutomationElement element, Rect submenuBounds) =>
@@ -316,7 +259,7 @@ public sealed partial class CodexAutomationService
                           (submenuBounds.X + submenuBounds.Width / 2));
         var dy = Math.Abs(candidate.Y + candidate.Height / 2 -
                           (submenuBounds.Y + submenuBounds.Height / 2));
-        return dx <= 760 && dy <= 520;
+        return dx <= 620 && dy <= 420;
     }
 
     private static double ScoreContainer(
@@ -333,11 +276,6 @@ public sealed partial class CodexAutomationService
         }
 
         var area = Math.Min(bounds.Width * bounds.Height, 500_000);
-        if (submenuBounds.IsEmpty)
-        {
-            return newPenalty + identityPenalty + area;
-        }
-
         var dx = bounds.X + bounds.Width / 2 - (submenuBounds.X + submenuBounds.Width / 2);
         var dy = bounds.Y + bounds.Height / 2 - (submenuBounds.Y + submenuBounds.Height / 2);
         return newPenalty + identityPenalty + area + Math.Sqrt(dx * dx + dy * dy) * 100;
