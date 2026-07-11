@@ -7,7 +7,9 @@ public static partial class TextNormalizer
     [GeneratedRegex(@"\s+")]
     private static partial Regex WhitespaceRegex();
 
-    public static string Normalize(string? value, bool effort = false)
+    public static string Normalize(string? value) => Normalize(value, effort: false);
+
+    public static string Normalize(string? value, bool effort)
     {
         var normalized = WhitespaceRegex().Replace(value ?? string.Empty, " ").Trim();
         if (effort && normalized.StartsWith("Ultra", StringComparison.OrdinalIgnoreCase))
