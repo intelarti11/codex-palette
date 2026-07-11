@@ -1,5 +1,8 @@
 export interface NativeLabels {
   efforts: string[]
+  speedLabel: string
+  speeds: string[]
+  speedIndex: number
 }
 
 export interface OverlaySelection {
@@ -14,6 +17,7 @@ export interface CodexOverlayBridge {
   dragTo: (position: { x: number; y: number }) => void
   endDrag: () => Promise<void>
   apply: (selection: OverlaySelection) => Promise<{ ok: boolean; selection?: string }>
+  applySpeed: (speedIndex: number) => Promise<{ ok: boolean; speedIndex?: number; speed?: string }>
   resetPosition: () => Promise<void>
   quit: () => Promise<void>
 }
