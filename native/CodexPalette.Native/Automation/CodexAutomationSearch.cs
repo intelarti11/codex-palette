@@ -22,6 +22,7 @@ public sealed partial class CodexAutomationService
             var candidates = controlType == ControlType.MenuItem
                 ? GetElements(processId).Where(TestVisible).Where(IsOptionElement)
                 : GetElements(processId, controlType);
+
             foreach (var element in candidates)
             {
                 if (MatchesLabel(element, name, exact, regex))
@@ -30,37 +31,10 @@ public sealed partial class CodexAutomationService
                 }
             }
 
-            Thread.Sleep(70);
+            Thread.Sleep(40);
         }
 
         throw new AutomationUnavailableException($"Codex control not found: {name}");
-    }
-
-    private static AutomationElement FindActionableElement(
-        int processId,
-        string name,
-        bool exact,
-        int timeoutMilliseconds,
-        CancellationToken cancellationToken)
-    {
-        var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMilliseconds);
-        var regex = exact ? null : new Regex(name, RegexOptions.CultureInvariant);
-
-        while (DateTime.UtcNow < deadline)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            foreach (var element in GetElements(processId).Where(TestVisible).Where(IsOptionElement))
-            {
-                if (MatchesLabel(element, name, exact, regex))
-                {
-                    return element;
-                }
-            }
-
-            Thread.Sleep(70);
-        }
-
-        throw new AutomationUnavailableException($"Codex action not found: {name}");
     }
 
     private static bool MatchesLabel(
@@ -127,25 +101,34 @@ public sealed partial class CodexAutomationService
             .Cast<string>()
             .ToHashSet(StringComparer.Ordinal);
 
-    private static bool IsPopupTrigger(AutomationElement element)
+    private static ExpandCollapseState? GetExpandCollapseState(AutomationElement element)
     {
         if (!TryGetPattern(element, ExpandCollapsePattern.Pattern, out var value))
         {
-            return false;
+            return null;
         }
 
         try
         {
-            return ((ExpandCollapsePattern)value).Current.ExpandCollapseState != ExpandCollapseState.LeafNode;
+            return ((ExpandCollapsePattern)value).Current.ExpandCollapseState;
         }
         catch
         {
-            return false;
+            return null;
         }
     }
 
-    private static bool IsPotentialSubmenu(AutomationElement element) =>
-        IsPopupTrigger(element) || TryGetPattern(element, InvokePattern.Pattern, out _);
+    private static bool IsPopupTrigger(AutomationElement element)
+    {
+        var state = GetExpandCollapseState(element);
+        return state is not null and not ExpandCollapseState.LeafNode;
+    }
+
+    private static bool IsCollapsedPopupTrigger(AutomationElement element)
+    {
+        var state = GetExpandCollapseState(element);
+        return state is ExpandCollapseState.Collapsed or ExpandCollapseState.PartiallyExpanded;
+    }
 
     private static bool IsOptionElement(AutomationElement element)
     {
