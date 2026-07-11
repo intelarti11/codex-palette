@@ -9,37 +9,24 @@ public sealed partial class CodexAutomationService
         AutomationContext context,
         CancellationToken cancellationToken)
     {
-        var candidates = context.Submenus
-            .Where(IsCollapsedPopupTrigger)
-            .Where(submenu =>
-                !SameElement(submenu, context.ModelMenu) &&
-                !SameElement(submenu, context.EffortMenu))
-            .ToArray();
+        var submenu = context.SpeedMenu ??
+            throw new AutomationUnavailableException(
+                "The native two-position speed selector is not exposed in the Codex selector popup.");
 
-        foreach (var submenu in candidates)
+        var options = GetMenuOptions(
+            processId,
+            submenu,
+            minimum: 2,
+            maximum: 2,
+            effort: false,
+            cancellationToken);
+        if (options.Labels.Count != 2)
         {
-            try
-            {
-                var options = GetMenuOptions(
-                    processId,
-                    submenu,
-                    minimum: 2,
-                    maximum: 2,
-                    effort: false,
-                    cancellationToken);
-                if (options.Labels.Count == 2)
-                {
-                    return NewSpeed(context.Selector, submenu, options);
-                }
-            }
-            catch
-            {
-                CloseSilent(submenu);
-            }
+            throw new AutomationUnavailableException(
+                "The native speed selector does not expose exactly two options.");
         }
 
-        throw new AutomationUnavailableException(
-            "The native two-position speed selector was not found inside the Codex selector popup.");
+        return NewSpeed(context.Selector, submenu, options);
     }
 
     private static SpeedDescriptor NewSpeed(
@@ -53,7 +40,7 @@ public sealed partial class CodexAutomationService
             control,
             options.Items,
             options.Labels,
-            TextNormalizer.GetGroupLabel(control.Current.Name, texts, options.Labels),
+            TextNormalizer.GetGroupLabel(SafeName(control), texts, options.Labels),
             GetSelectedIndex(control, options.Items, options.Labels));
     }
 
@@ -77,7 +64,7 @@ public sealed partial class CodexAutomationService
             }
         }
 
-        var ownerName = TextNormalizer.Normalize(owner.Current.Name);
+        var ownerName = TextNormalizer.Normalize(SafeName(owner));
         var texts = GetTexts(owner);
         for (var index = 0; index < labels.Count; index++)
         {
