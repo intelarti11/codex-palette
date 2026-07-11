@@ -9,8 +9,24 @@ This directory contains the native Windows port of Codex Palette.
 - **WinEvent hooks** for foreground, visibility, destruction, and location changes.
 - A low-frequency two-second fallback check to recover after missed Windows events.
 - JSON settings under `%LOCALAPPDATA%\CodexPalette\settings.json`.
+- A compressed, self-contained, single-file Windows executable.
 
 The native build does not launch PowerShell, embed Chromium, use Node.js, move the mouse, send keyboard input, or change the foreground window to perform a selection.
+
+## UI Automation discovery
+
+Codex is Chromium-based, so the accessible control type can vary between desktop builds. The native port therefore does not require selector rows to be exposed as `MenuItem`, or popup content to be exposed as `Menu`.
+
+Discovery uses these signals in order:
+
+1. `AutomationId` as a language-independent identity hint when Chromium exposes one.
+2. `RuntimeId` snapshots to identify controls that become visible after a popup opens.
+3. `ExpandCollapsePattern` and `InvokePattern` to identify popup triggers.
+4. `SelectionItemPattern`, `TogglePattern`, and `InvokePattern` to identify selectable options.
+5. `Name`, `LabeledBy`, `ItemStatus`, `HelpText`, descendant text, and `ValuePattern` only for localized display labels and confirmation.
+6. Structural option sets as a fallback, rather than French or English menu names.
+
+No localized words such as `Modèle`, `Effort`, `Vitesse`, `Standard`, or `Rapide` are used to drive Codex.
 
 ## Build
 
@@ -24,6 +40,9 @@ dotnet publish .\native\CodexPalette.Native\CodexPalette.Native.csproj `
   -r win-x64 `
   --self-contained true `
   -p:PublishSingleFile=true `
+  -p:EnableCompressionInSingleFile=true `
+  -p:DebugType=None `
+  -p:DebugSymbols=false `
   -o .\artifacts\native-win-x64
 ```
 
