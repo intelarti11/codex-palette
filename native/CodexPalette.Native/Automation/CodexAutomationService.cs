@@ -122,7 +122,8 @@ public sealed partial class CodexAutomationService
             cached.Speeds,
             Math.Max(modelIndex, 0),
             effortIndex,
-            speedIndex);
+            speedIndex,
+            effort);
     }
 
     private static int FindPassiveSpeedIndex(int processId, IReadOnlyList<string> labels)
