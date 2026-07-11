@@ -14,8 +14,10 @@ public sealed class MainViewModel : ObservableObject
     private bool _isBusy;
     private string? _notice;
     private int _selectedModelIndex;
-    private int _selectedEffortIndex = 3;
+    private int _selectedEffortIndex = -1;
     private int _selectedSpeedIndex = -1;
+    private string _selectedEffortName = "…";
+    private string _speedLabel = string.Empty;
 
     public MainViewModel(CodexAutomationService automation)
     {
@@ -61,10 +63,13 @@ public sealed class MainViewModel : ObservableObject
     public string SelectedModelName =>
         ModelCatalog.All[Math.Clamp(_selectedModelIndex, 0, ModelCatalog.All.Count - 1)].Name;
 
-    public string SelectedEffortName =>
-        _selectedEffortIndex >= 0 && _selectedEffortIndex < EffortRows.Count
-            ? EffortRows[_selectedEffortIndex].Label
-            : "…";
+    public string SelectedEffortName => _selectedEffortName;
+
+    public string SpeedLabel
+    {
+        get => _speedLabel;
+        private set => SetProperty(ref _speedLabel, value);
+    }
 
     public async Task RefreshAsync(bool showErrors = false)
     {
@@ -110,6 +115,9 @@ public sealed class MainViewModel : ObservableObject
             var result = await _automation.ApplySelectionAsync(cell.ModelIndex, cell.EffortIndex);
             _selectedModelIndex = cell.ModelIndex;
             _selectedEffortIndex = cell.EffortIndex;
+            _selectedEffortName = cell.EffortIndex >= 0 && cell.EffortIndex < EffortRows.Count
+                ? EffortRows[cell.EffortIndex].Label
+                : _selectedEffortName;
             UpdateCellSelection();
             OnPropertyChanged(nameof(SelectedModelName));
             OnPropertyChanged(nameof(SelectedEffortName));
@@ -161,9 +169,31 @@ public sealed class MainViewModel : ObservableObject
     private void ApplyNativeState(NativePaletteState state)
     {
         _selectedModelIndex = state.ModelIndex;
-        _selectedEffortIndex = state.EffortIndex;
         _selectedSpeedIndex = state.SpeedIndex;
-        RebuildEfforts(state.Efforts);
+
+        if (state.Efforts.Count is 4 or 5)
+        {
+            _selectedEffortIndex = state.EffortIndex;
+            RebuildEfforts(state.Efforts);
+            if (_selectedEffortIndex >= 0 && _selectedEffortIndex < EffortRows.Count)
+            {
+                _selectedEffortName = EffortRows[_selectedEffortIndex].Label;
+            }
+            else if (!string.IsNullOrWhiteSpace(state.CurrentEffort))
+            {
+                _selectedEffortName = state.CurrentEffort;
+            }
+        }
+        else
+        {
+            _selectedEffortIndex = -1;
+            if (!string.IsNullOrWhiteSpace(state.CurrentEffort))
+            {
+                _selectedEffortName = state.CurrentEffort;
+            }
+            UpdateCellSelection();
+        }
+
         RebuildSpeeds(state.SpeedLabel, state.Speeds);
         OnPropertyChanged(nameof(SelectedModelName));
         OnPropertyChanged(nameof(SelectedEffortName));
@@ -189,8 +219,6 @@ public sealed class MainViewModel : ObservableObject
 
             EffortRows.Add(new EffortRowViewModel(effortLabels[effortIndex], cells));
         }
-
-        OnPropertyChanged(nameof(SelectedEffortName));
     }
 
     private void RebuildSpeeds(string label, IReadOnlyList<string> speedLabels)
@@ -206,13 +234,6 @@ public sealed class MainViewModel : ObservableObject
 
         SpeedLabel = label;
         OnPropertyChanged(nameof(HasSpeeds));
-    }
-
-    private string _speedLabel = string.Empty;
-    public string SpeedLabel
-    {
-        get => _speedLabel;
-        private set => SetProperty(ref _speedLabel, value);
     }
 
     private void UpdateCellSelection()
