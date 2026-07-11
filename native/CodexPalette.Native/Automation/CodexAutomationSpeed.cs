@@ -3,7 +3,8 @@ using System.Windows.Automation;
 namespace CodexPalette.Native.Automation;
 
 public sealed partial class CodexAutomationService
-{    private static SpeedDescriptor GetSpeed(
+{
+    private static SpeedDescriptor GetSpeed(
         int processId,
         AutomationContext context,
         CancellationToken cancellationToken)
@@ -41,26 +42,21 @@ public sealed partial class CodexAutomationService
         var centerX = selectorBounds.X + selectorBounds.Width / 2;
         var centerY = selectorBounds.Y + selectorBounds.Height / 2;
 
-        var candidates = GetElements(processId, ControlType.Button)
-            .Where(button => !SameElement(button, selector) && TestVisible(button))
-            .Select(button =>
+        var candidates = GetElements(processId)
+            .Where(control => !SameElement(control, selector) && TestVisible(control))
+            .Where(IsPopupTrigger)
+            .Select(control =>
             {
-                if (!TryGetPattern(button, ExpandCollapsePattern.Pattern, out var value))
+                var bounds = SafeBounds(control);
+                if (bounds.IsEmpty)
                 {
                     return null;
                 }
 
-                var pattern = (ExpandCollapsePattern)value;
-                if (pattern.Current.ExpandCollapseState == ExpandCollapseState.LeafNode)
-                {
-                    return null;
-                }
-
-                var bounds = button.Current.BoundingRectangle;
                 var dx = Math.Abs(bounds.X + bounds.Width / 2 - centerX);
                 var dy = Math.Abs(bounds.Y + bounds.Height / 2 - centerY);
-                return dx <= 520 && dy <= 140
-                    ? new SpeedCandidate(button, dx + 3 * dy)
+                return dx <= 520 && dy <= 180
+                    ? new SpeedCandidate(control, dx + 3 * dy)
                     : null;
             })
             .Where(static candidate => candidate is not null)
@@ -72,15 +68,15 @@ public sealed partial class CodexAutomationService
         {
             try
             {
-                var options = GetMenuOptions(processId, candidate.Button, 2, 2, effort: false, cancellationToken);
+                var options = GetMenuOptions(processId, candidate.Control, 2, 2, effort: false, cancellationToken);
                 if (options.Labels.Count == 2)
                 {
-                    return NewSpeed(candidate.Button, candidate.Button, options);
+                    return NewSpeed(candidate.Control, candidate.Control, options);
                 }
             }
             catch
             {
-                CloseSilent(candidate.Button);
+                CloseSilent(candidate.Control);
             }
         }
 
@@ -135,6 +131,4 @@ public sealed partial class CodexAutomationService
 
         return -1;
     }
-
-
 }
