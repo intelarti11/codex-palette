@@ -7,52 +7,64 @@ public sealed partial class CodexAutomationService
     private static void OpenSilent(AutomationElement element, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        if (TryGetPattern(element, ExpandCollapsePattern.Pattern, out var expandValue))
+        if (!TryGetPattern(element, ExpandCollapsePattern.Pattern, out var expandValue))
         {
-            var pattern = (ExpandCollapsePattern)expandValue;
-            var state = pattern.Current.ExpandCollapseState;
-            if (state != ExpandCollapseState.LeafNode)
-            {
-                if (state != ExpandCollapseState.Expanded)
-                {
-                    pattern.Expand();
-                }
-
-                Thread.Sleep(240);
-                return;
-            }
+            throw new AutomationUnavailableException(
+                $"The control '{SafeName(element)}' does not expose ExpandCollapsePattern.");
         }
 
-        if (TryGetPattern(element, InvokePattern.Pattern, out var invokeValue))
+        var pattern = (ExpandCollapsePattern)expandValue;
+        var state = pattern.Current.ExpandCollapseState;
+        if (state == ExpandCollapseState.LeafNode)
         {
-            ((InvokePattern)invokeValue).Invoke();
-            Thread.Sleep(240);
-            return;
+            throw new AutomationUnavailableException(
+                $"The control '{SafeName(element)}' is not an expandable popup control.");
         }
 
-        throw new AutomationUnavailableException(
-            $"The control '{element.Current.Name}' has no silent UI Automation action.");
+        if (state != ExpandCollapseState.Expanded)
+        {
+            pattern.Expand();
+            WaitForExpansionState(element, ExpandCollapseState.Expanded, 500, cancellationToken);
+        }
     }
 
     private static void SelectSilent(AutomationElement element, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        if (TryGetPattern(element, InvokePattern.Pattern, out var invokeValue))
-        {
-            ((InvokePattern)invokeValue).Invoke();
-            Thread.Sleep(300);
-            return;
-        }
 
         if (TryGetPattern(element, SelectionItemPattern.Pattern, out var selectionValue))
         {
-            ((SelectionItemPattern)selectionValue).Select();
-            Thread.Sleep(300);
+            var pattern = (SelectionItemPattern)selectionValue;
+            if (!pattern.Current.IsSelected)
+            {
+                pattern.Select();
+            }
+
+            Thread.Sleep(80);
+            return;
+        }
+
+        if (TryGetPattern(element, TogglePattern.Pattern, out var toggleValue))
+        {
+            var pattern = (TogglePattern)toggleValue;
+            if (pattern.Current.ToggleState != ToggleState.On)
+            {
+                pattern.Toggle();
+            }
+
+            Thread.Sleep(80);
+            return;
+        }
+
+        if (TryGetPattern(element, InvokePattern.Pattern, out var invokeValue))
+        {
+            ((InvokePattern)invokeValue).Invoke();
+            Thread.Sleep(100);
             return;
         }
 
         throw new AutomationUnavailableException(
-            $"The option '{element.Current.Name}' has no silent UI Automation action.");
+            $"The option '{SafeName(element)}' has no silent UI Automation selection action.");
     }
 
     private static void CloseSilent(AutomationElement? element)
@@ -70,13 +82,52 @@ public sealed partial class CodexAutomationService
                 if (pattern.Current.ExpandCollapseState == ExpandCollapseState.Expanded)
                 {
                     pattern.Collapse();
-                    Thread.Sleep(150);
+                    WaitForExpansionState(element, ExpandCollapseState.Collapsed, 350, CancellationToken.None);
                 }
             }
         }
         catch
         {
-            // A popup can disappear before cleanup runs.
+            // Chromium can invalidate a popup element while it is being closed.
+        }
+    }
+
+    private static void WaitForExpansionState(
+        AutomationElement element,
+        ExpandCollapseState expected,
+        int timeoutMilliseconds,
+        CancellationToken cancellationToken)
+    {
+        var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMilliseconds);
+        while (DateTime.UtcNow < deadline)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                if (TryGetPattern(element, ExpandCollapsePattern.Pattern, out var value) &&
+                    ((ExpandCollapsePattern)value).Current.ExpandCollapseState == expected)
+                {
+                    return;
+                }
+            }
+            catch
+            {
+                return;
+            }
+
+            Thread.Sleep(20);
+        }
+    }
+
+    private static string SafeName(AutomationElement element)
+    {
+        try
+        {
+            return element.Current.Name ?? string.Empty;
+        }
+        catch
+        {
+            return string.Empty;
         }
     }
 }
