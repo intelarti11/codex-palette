@@ -102,14 +102,30 @@ public sealed partial class CodexAutomationService
             throw new AutomationUnavailableException("The official Codex window could not be found.");
 
         AutomationContext? context = null;
+        SpeedDescriptor? speed = null;
         try
         {
             context = GetContext(process.Id, cancellationToken);
-            var effortOptions = GetMenuOptions(process.Id, context.EffortMenu, 4, 5, effort: true, cancellationToken);
+
+            MenuOptions effortOptions;
+            try
+            {
+                effortOptions = GetMenuOptions(
+                    process.Id,
+                    context.EffortMenu,
+                    minimum: 4,
+                    maximum: 5,
+                    effort: true,
+                    cancellationToken);
+            }
+            finally
+            {
+                CloseSilent(context.EffortMenu);
+            }
+
             var efforts = effortOptions.Labels;
             var modelIndex = Array.FindIndex(ModelNames, model => model == context.Model);
             var effortIndex = FindLabelIndex(efforts, context.Effort);
-            CloseSilent(context.Selector);
 
             var speedLabel = string.Empty;
             IReadOnlyList<string> speeds = Array.Empty<string>();
@@ -117,16 +133,18 @@ public sealed partial class CodexAutomationService
 
             try
             {
-                context = GetContext(process.Id, cancellationToken);
-                var speed = GetSpeed(process.Id, context, cancellationToken);
+                speed = GetSpeed(process.Id, context, cancellationToken);
                 speedLabel = speed.Label;
                 speeds = speed.Labels;
                 speedIndex = speed.SelectedIndex;
-                CloseSilent(speed.Owner);
             }
             catch
             {
-                CloseSilent(context?.Selector);
+                // Speed is optional when the current Codex build does not expose it.
+            }
+            finally
+            {
+                CloseSilent(speed?.Control);
             }
 
             return new NativePaletteState(
@@ -139,7 +157,8 @@ public sealed partial class CodexAutomationService
         }
         finally
         {
-            CloseSilent(context?.Selector);
+            CloseSilent(speed?.Control);
+            CloseContext(context);
         }
     }
 
@@ -162,42 +181,75 @@ public sealed partial class CodexAutomationService
             throw new AutomationUnavailableException("The official Codex window could not be found.");
 
         var modelName = ModelNames[modelIndex];
-        var context = GetContext(process.Id, cancellationToken);
-        OpenSilent(context.ModelMenu, cancellationToken);
-        var modelItem = FindElement(
-            process.Id,
-            ControlType.MenuItem,
-            modelName,
-            exact: true,
-            timeoutMilliseconds: 2500,
-            cancellationToken);
-        SelectSilent(modelItem, cancellationToken);
+        AutomationContext? context = null;
+        try
+        {
+            context = GetContext(process.Id, cancellationToken);
+            var modelOptions = GetMenuOptions(
+                process.Id,
+                context.ModelMenu,
+                minimum: 2,
+                maximum: 10,
+                effort: false,
+                cancellationToken);
+            var targetIndex = modelOptions.Labels
+                .Select((label, index) => (label, index))
+                .FirstOrDefault(item => string.Equals(item.label, modelName, StringComparison.Ordinal))
+                .index;
+
+            if (targetIndex < 0 || targetIndex >= modelOptions.Items.Count ||
+                !string.Equals(modelOptions.Labels[targetIndex], modelName, StringComparison.Ordinal))
+            {
+                throw new AutomationUnavailableException($"The model '{modelName}' is not exposed by Codex.");
+            }
+
+            SelectSilent(modelOptions.Items[targetIndex], cancellationToken);
+        }
+        finally
+        {
+            CloseContext(context);
+        }
 
         FindElement(
             process.Id,
             ControlType.Button,
             "^" + Regex.Escape(modelName) + @"\s",
             exact: false,
-            timeoutMilliseconds: 3500,
+            timeoutMilliseconds: 2500,
             cancellationToken);
 
-        context = GetContext(process.Id, cancellationToken);
-        var effortOptions = GetMenuOptions(process.Id, context.EffortMenu, 4, 5, effort: true, cancellationToken);
-        if (effortIndex >= effortOptions.Items.Count)
+        context = null;
+        string effort;
+        try
         {
-            CloseSilent(context.Selector);
-            throw new InvalidOperationException("The requested reasoning level is not exposed by Codex.");
+            context = GetContext(process.Id, cancellationToken);
+            var effortOptions = GetMenuOptions(
+                process.Id,
+                context.EffortMenu,
+                minimum: 4,
+                maximum: 5,
+                effort: true,
+                cancellationToken);
+            if (effortIndex >= effortOptions.Items.Count)
+            {
+                throw new InvalidOperationException("The requested reasoning level is not exposed by Codex.");
+            }
+
+            effort = effortOptions.Labels[effortIndex];
+            SelectSilent(effortOptions.Items[effortIndex], cancellationToken);
+        }
+        finally
+        {
+            CloseContext(context);
         }
 
-        var effort = effortOptions.Labels[effortIndex];
-        SelectSilent(effortOptions.Items[effortIndex], cancellationToken);
         var expected = "^" + Regex.Escape(modelName) + @"\s+" + Regex.Escape(effort) + "$";
         var confirmed = FindElement(
             process.Id,
             ControlType.Button,
             expected,
             exact: false,
-            timeoutMilliseconds: 3500,
+            timeoutMilliseconds: 2500,
             cancellationToken);
 
         return new SelectionResult(confirmed.Current.Name);
@@ -213,24 +265,35 @@ public sealed partial class CodexAutomationService
         using var process = TryFindCodexProcess() ??
             throw new AutomationUnavailableException("The official Codex window could not be found.");
 
-        var context = GetContext(process.Id, cancellationToken);
-        var speed = GetSpeed(process.Id, context, cancellationToken);
-        var label = speed.Labels[speedIndex];
-        SelectSilent(speed.Items[speedIndex], cancellationToken);
+        AutomationContext? context = null;
+        SpeedDescriptor? speed = null;
+        string label;
+        try
+        {
+            context = GetContext(process.Id, cancellationToken);
+            speed = GetSpeed(process.Id, context, cancellationToken);
+            label = speed.Labels[speedIndex];
+            SelectSilent(speed.Items[speedIndex], cancellationToken);
+        }
+        finally
+        {
+            CloseSilent(speed?.Control);
+            CloseContext(context);
+        }
 
-        var deadline = DateTime.UtcNow.AddMilliseconds(3500);
+        var deadline = DateTime.UtcNow.AddMilliseconds(2200);
         while (DateTime.UtcNow < deadline)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            context = null;
+            speed = null;
             try
             {
-                var currentContext = GetContext(process.Id, cancellationToken);
-                var current = GetSpeed(process.Id, currentContext, cancellationToken);
-                var ownerName = TextNormalizer.Normalize(current.Control.Current.Name);
-                var confirmed = current.SelectedIndex == speedIndex ||
-                    ownerName.EndsWith(label, StringComparison.Ordinal);
-                CloseSilent(current.Owner);
-                if (confirmed)
+                context = GetContext(process.Id, cancellationToken);
+                speed = GetSpeed(process.Id, context, cancellationToken);
+                var ownerName = TextNormalizer.Normalize(speed.Control.Current.Name);
+                if (speed.SelectedIndex == speedIndex ||
+                    ownerName.EndsWith(label, StringComparison.Ordinal))
                 {
                     return new SpeedSelectionResult(speedIndex, label);
                 }
@@ -239,14 +302,17 @@ public sealed partial class CodexAutomationService
             {
                 // Codex may rebuild the popup tree between confirmation attempts.
             }
+            finally
+            {
+                CloseSilent(speed?.Control);
+                CloseContext(context);
+            }
 
-            Thread.Sleep(100);
+            Thread.Sleep(60);
         }
 
         throw new AutomationUnavailableException("Codex did not confirm the requested speed.");
     }
-
-
 }
 
 public sealed class AutomationUnavailableException(string message) : InvalidOperationException(message);
