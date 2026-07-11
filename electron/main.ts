@@ -1,102 +1,132 @@
-import { app, BrowserWindow, dialog, ipcMain, shell, type OpenDialogOptions } from 'electron'
-import { spawn, execFile } from 'node:child_process'
+import { app, BrowserWindow, ipcMain, screen } from 'electron'
+import { execFile, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { promisify } from 'node:util'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import type { ChildProcessWithoutNullStreams } from 'node:child_process'
+import { readFile, writeFile } from 'node:fs/promises'
 
 const execFileAsync = promisify(execFile)
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const APP_ROOT = join(__dirname, '..')
+const CLOSED_SIZE = { width: 212, height: 50 }
+const OPEN_SIZE = { width: 680, height: 360 }
+type Point = { x: number; y: number }
+type NativeLabels = { efforts: string[] }
 
 let mainWindow: BrowserWindow | null = null
-let codexProcess: ChildProcessWithoutNullStreams | null = null
-let stdoutBuffer = ''
-
-function emit(channel: string, payload: unknown) {
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send(channel, payload)
-  }
+let paletteOpen = false
+let applying = false
+let draggingWindow = false
+let watcher: ChildProcessWithoutNullStreams | null = null
+let anchor = { x: 951, y: 756 }
+let selectorAnchor: Point | null = null
+let manualOffset: Point | null = null
+let nativeLabels: NativeLabels = {
+  efforts: ['Léger', 'Moyen', 'Élevé', 'Très élevé', 'Ultra'],
 }
 
-async function getCodexVersion(): Promise<string> {
-  const { stdout } = await execFileAsync('codex', ['--version'], {
-    windowsHide: true,
-  })
-  return stdout.trim()
-}
+const helperPath = () =>
+  app.isPackaged
+    ? join(process.resourcesPath, 'native-overlay.ps1')
+    : join(APP_ROOT, 'electron', 'native-overlay.ps1')
 
-async function startCodexServer() {
-  if (codexProcess) {
-    return { running: true, version: await getCodexVersion() }
-  }
+const positionPath = () => join(app.getPath('userData'), 'overlay-position.json')
 
-  const version = await getCodexVersion()
-  stdoutBuffer = ''
-
-  codexProcess = spawn('codex', ['app-server', '--listen', 'stdio://'], {
-    stdio: ['pipe', 'pipe', 'pipe'],
-    windowsHide: true,
-  })
-
-  codexProcess.stdout.setEncoding('utf8')
-  codexProcess.stderr.setEncoding('utf8')
-
-  codexProcess.stdout.on('data', (chunk: string) => {
-    stdoutBuffer += chunk
-    const lines = stdoutBuffer.split(/\r?\n/)
-    stdoutBuffer = lines.pop() ?? ''
-
-    for (const line of lines) {
-      const trimmed = line.trim()
-      if (trimmed) emit('codex:message', trimmed)
+async function loadNativeLabels() {
+  try {
+    const { stdout } = await execFileAsync(
+      'powershell.exe',
+      [
+        '-NoProfile',
+        '-NonInteractive',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-File',
+        helperPath(),
+        '-Mode',
+        'labels',
+      ],
+      { windowsHide: true, timeout: 12_000 },
+    )
+    const result = JSON.parse(stdout.trim()) as Partial<NativeLabels>
+    if (Array.isArray(result.efforts) && result.efforts.length === 5) {
+      nativeLabels = { efforts: result.efforts.map(String) }
     }
-  })
-
-  codexProcess.stderr.on('data', (chunk: string) => {
-    const text = chunk.trim()
-    if (text) emit('codex:log', text)
-  })
-
-  codexProcess.on('error', (error) => {
-    emit('codex:status', { running: false, error: error.message })
-    codexProcess = null
-  })
-
-  codexProcess.on('exit', (code, signal) => {
-    emit('codex:status', { running: false, code, signal })
-    codexProcess = null
-  })
-
-  emit('codex:status', { running: true, version })
-  return { running: true, version }
-}
-
-function stopCodexServer() {
-  if (!codexProcess) return { running: false }
-  codexProcess.kill()
-  codexProcess = null
-  return { running: false }
-}
-
-function sendRpc(payload: unknown) {
-  if (!codexProcess || codexProcess.killed) {
-    throw new Error('Codex App Server is not running.')
+  } catch {
+    // Keep the bundled fallback if Codex is not ready yet.
   }
+}
 
-  codexProcess.stdin.write(`${JSON.stringify(payload)}\n`)
-  return { sent: true }
+function defaultAnchor() {
+  const { workArea } = screen.getPrimaryDisplay()
+  return {
+    x: workArea.x + Math.floor((workArea.width - CLOSED_SIZE.width) / 2),
+    y: workArea.y + Math.floor((workArea.height - CLOSED_SIZE.height) / 2),
+  }
+}
+
+async function loadAnchor() {
+  try {
+    const saved = JSON.parse(await readFile(positionPath(), 'utf8')) as {
+      x?: number
+      y?: number
+      offsetX?: number
+      offsetY?: number
+    }
+    if (Number.isFinite(saved.x) && Number.isFinite(saved.y)) {
+      anchor = { x: saved.x as number, y: saved.y as number }
+      if (Number.isFinite(saved.offsetX) && Number.isFinite(saved.offsetY)) {
+        manualOffset = { x: saved.offsetX as number, y: saved.offsetY as number }
+      }
+      return
+    }
+  } catch {
+    // First run or malformed preference: use a centered fallback until Codex is detected.
+  }
+  anchor = defaultAnchor()
+}
+
+async function saveAnchor() {
+  const preference = manualOffset
+    ? { ...anchor, offsetX: manualOffset.x, offsetY: manualOffset.y }
+    : anchor
+  await writeFile(positionPath(), JSON.stringify(preference), 'utf8')
+}
+
+function boundsFor(open: boolean) {
+  if (!open) return { ...anchor, ...CLOSED_SIZE }
+  return {
+    x: anchor.x - (OPEN_SIZE.width - CLOSED_SIZE.width),
+    y: anchor.y - (OPEN_SIZE.height - CLOSED_SIZE.height),
+    ...OPEN_SIZE,
+  }
+}
+
+function setPaletteOpen(open: boolean) {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  if (!paletteOpen) {
+    const [x, y] = mainWindow.getPosition()
+    anchor = { x, y }
+    void saveAnchor()
+  }
+  paletteOpen = open
+  mainWindow.setBounds(boundsFor(open), true)
 }
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 1420,
-    height: 960,
-    minWidth: 980,
-    minHeight: 700,
-    title: 'Codex Palette',
-    backgroundColor: '#f8f8f6',
+    ...boundsFor(false),
+    transparent: true,
+    frame: false,
+    resizable: false,
+    maximizable: false,
+    minimizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    hasShadow: false,
     show: false,
+    backgroundColor: '#00000000',
     webPreferences: {
       preload: join(__dirname, 'preload.mjs'),
       contextIsolation: true,
@@ -105,7 +135,14 @@ function createWindow() {
     },
   })
 
-  mainWindow.once('ready-to-show', () => mainWindow?.show())
+  mainWindow.setAlwaysOnTop(true, 'screen-saver', 1)
+  mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+  mainWindow.on('moved', () => {
+    if (!mainWindow || paletteOpen) return
+    const [x, y] = mainWindow.getPosition()
+    anchor = { x, y }
+    void saveAnchor()
+  })
 
   if (process.env.VITE_DEV_SERVER_URL) {
     void mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL)
@@ -114,30 +151,152 @@ function createWindow() {
   }
 }
 
-ipcMain.handle('codex:start', startCodexServer)
-ipcMain.handle('codex:stop', stopCodexServer)
-ipcMain.handle('codex:send', (_event, payload) => sendRpc(payload))
-ipcMain.handle('codex:version', getCodexVersion)
-ipcMain.handle('project:select', async () => {
-  const options: OpenDialogOptions = {
-    title: 'Choose a project folder',
-    properties: ['openDirectory', 'createDirectory'],
-  }
-  const result = mainWindow
-    ? await dialog.showOpenDialog(mainWindow, options)
-    : await dialog.showOpenDialog(options)
-  return result.canceled ? null : result.filePaths[0]
-})
-ipcMain.handle('external:open', (_event, url: string) => shell.openExternal(url))
+function startWatcher() {
+  watcher?.kill()
+  watcher = spawn(
+    'powershell.exe',
+    [
+      '-NoProfile',
+      '-NonInteractive',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-File',
+      helperPath(),
+      '-Mode',
+      'watch',
+      '-OverlayPid',
+      String(process.pid),
+    ],
+    { windowsHide: true },
+  )
 
-app.whenReady().then(() => {
-  createWindow()
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+  watcher.stdout.setEncoding('utf8')
+  let buffer = ''
+  watcher.stdout.on('data', (chunk: string) => {
+    buffer += chunk
+    const lines = buffer.split(/\r?\n/)
+    buffer = lines.pop() ?? ''
+    for (const line of lines) {
+      if (!line.trim() || !mainWindow || mainWindow.isDestroyed() || applying) continue
+      try {
+        const state = JSON.parse(line) as {
+          visible: boolean
+          selector?: { x: number; y: number; width: number; height: number } | null
+        }
+        if (state.selector) {
+          selectorAnchor = {
+            x: Math.round(state.selector.x + state.selector.width / 2 - 119),
+            y: Math.round(state.selector.y + state.selector.height / 2 - 25),
+          }
+          if (!draggingWindow) {
+            const offset = manualOffset ?? { x: 0, y: 0 }
+            const nextAnchor = {
+              x: selectorAnchor.x + offset.x,
+              y: selectorAnchor.y + offset.y,
+            }
+            if (nextAnchor.x !== anchor.x || nextAnchor.y !== anchor.y) {
+              anchor = nextAnchor
+              mainWindow.setBounds(boundsFor(paletteOpen), false)
+            }
+          }
+        }
+        if (state.visible) {
+          mainWindow.showInactive()
+          mainWindow.moveTop()
+        }
+        else mainWindow.hide()
+      } catch {
+        // Ignore partial diagnostic output from PowerShell.
+      }
+    }
   })
+}
+
+ipcMain.handle('overlay:set-open', (_event, open: boolean) => setPaletteOpen(open))
+ipcMain.handle('overlay:get-labels', () => nativeLabels)
+ipcMain.handle('overlay:begin-drag', () => {
+  draggingWindow = true
+  if (!mainWindow || mainWindow.isDestroyed()) throw new Error('La surcouche n’est pas prête.')
+  const [x, y] = mainWindow.getPosition()
+  return { x, y }
+})
+ipcMain.on('overlay:drag-to', (_event, position: { x: number; y: number }) => {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  if (!Number.isFinite(position.x) || !Number.isFinite(position.y)) return
+  mainWindow.setPosition(Math.round(position.x), Math.round(position.y), false)
+})
+ipcMain.handle('overlay:end-drag', async () => {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  const [x, y] = mainWindow.getPosition()
+  anchor = paletteOpen
+    ? {
+        x: x + (OPEN_SIZE.width - CLOSED_SIZE.width),
+        y: y + (OPEN_SIZE.height - CLOSED_SIZE.height),
+      }
+    : { x, y }
+  draggingWindow = false
+  if (selectorAnchor) {
+    manualOffset = {
+      x: anchor.x - selectorAnchor.x,
+      y: anchor.y - selectorAnchor.y,
+    }
+  }
+  await saveAnchor()
+})
+ipcMain.handle('overlay:reset-position', async () => {
+  manualOffset = selectorAnchor ? { x: 0, y: 0 } : null
+  anchor = selectorAnchor ?? defaultAnchor()
+  await saveAnchor()
+  mainWindow?.setBounds(boundsFor(paletteOpen), true)
+})
+ipcMain.handle(
+  'overlay:apply',
+  async (_event, selection: { modelIndex: number; effortIndex: number }) => {
+    if (!mainWindow) throw new Error('La surcouche n’est pas prête.')
+    applying = true
+    mainWindow.hide()
+    try {
+      const { stdout } = await execFileAsync(
+        'powershell.exe',
+        [
+          '-NoProfile',
+          '-NonInteractive',
+          '-ExecutionPolicy',
+          'Bypass',
+          '-File',
+          helperPath(),
+          '-Mode',
+          'apply',
+          '-ModelIndex',
+          String(selection.modelIndex),
+          '-EffortIndex',
+          String(selection.effortIndex),
+        ],
+        { windowsHide: true, timeout: 20_000 },
+      )
+      return JSON.parse(stdout.trim()) as { ok: boolean }
+    } catch (error) {
+      const stderr =
+        typeof error === 'object' && error !== null && 'stderr' in error
+          ? String((error as { stderr?: unknown }).stderr ?? '')
+          : ''
+      const firstLine = stderr.split(/\r?\n/).find((line) => line.trim())?.trim()
+      throw new Error(firstLine || 'Codex n’a pas confirmé la sélection demandée.')
+    } finally {
+      applying = false
+      mainWindow.showInactive()
+      mainWindow.moveTop()
+    }
+  },
+)
+ipcMain.handle('overlay:quit', () => app.quit())
+
+app.whenReady().then(async () => {
+  await loadAnchor()
+  await loadNativeLabels()
+  createWindow()
+  startWatcher()
 })
 
-app.on('window-all-closed', () => {
-  stopCodexServer()
-  if (process.platform !== 'darwin') app.quit()
-})
+app.on('before-quit', () => watcher?.kill())
+app.on('window-all-closed', () => app.quit())

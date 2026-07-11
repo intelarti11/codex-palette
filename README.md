@@ -1,90 +1,77 @@
-# Codex Palette
+# Codex Palette Overlay
 
-A clean, unofficial desktop client for Codex App Server, featuring a visual model and reasoning-effort selector, inspired by an idea from Karol ([@KarolCodes](https://x.com/KarolCodes)).
+An unofficial, movable model-and-reasoning palette for the official Codex desktop app on Windows.
 
-> **Status:** early MVP. The interface and model picker are functional; packaging and broader App Server coverage are still evolving.
+Codex Palette Overlay does not replace Codex and does not run a second chat client. It displays a small transparent window above the native model selector and drives the selector through Windows UI Automation.
 
-## What it does
+## Features
 
-- Starts `codex app-server` locally over its default JSONL/stdio transport.
-- Discovers the models and reasoning efforts available to the signed-in Codex account through `model/list`.
-- Presents every supported model/effort pair in a visual matrix.
-- Opens a local project folder and starts Codex threads in `workspace-write` mode.
-- Streams assistant output and command activity.
-- Surfaces command and file-change approval requests.
-- Falls back to a safe preview catalog when Codex CLI is not available, so the interface can still be explored.
+- Visual matrix for model and reasoning-effort combinations.
+- Automatically aligns itself with the native Codex selector.
+- Drag from anywhere on the overlay to keep a custom offset.
+- Invokes native model and effort menu entries directly and verifies the final selection.
+- Reads localized effort labels from the running Codex app instead of maintaining its own translations.
+- Appears only while Codex or the overlay is active.
+- Does not read or store OpenAI credentials.
 
-## Requirements
+## Compatibility
 
-- Node.js 22 or newer
-- npm
-- Codex CLI installed and available as `codex` in your `PATH`
-- A valid Codex login (`codex login`)
+- Windows 10 or Windows 11
+- The official Codex desktop app
+- Node.js 22 or newer for development
 
-## Run locally
+The integration depends on accessibility names exposed by the current Codex desktop UI. A future Codex UI update may require selector adjustments.
 
-```bash
+## Run from source
+
+```powershell
 npm install
 npm run dev
 ```
 
-The app attempts to start:
-
-```bash
-codex app-server --listen stdio://
-```
-
-When the CLI is missing or unavailable, the UI opens in **Preview mode** without sending prompts to a model.
+Keep the official Codex app open. The capsule will align itself with the native selector. Click the capsule to open the matrix, or hold and drag anywhere on the overlay to move it.
 
 ## Validate
 
-```bash
+```powershell
 npm test
 npm run build
 ```
 
-## Package the desktop app
+## Build the Windows installer
 
-```bash
+```powershell
 npm run dist
 ```
 
-Electron Builder writes platform packages to `release/`.
+The NSIS installer is written to `release/`.
 
-## Architecture
+## How it works
 
 ```text
-React renderer
-    │ secure IPC through contextBridge
-Electron main process
-    │ newline-delimited JSON over stdin/stdout
-codex app-server
+React palette
+    | context-isolated IPC
+Electron transparent window
+    | Windows UI Automation
+Official Codex model selector
 ```
 
-The renderer never receives ChatGPT tokens or API keys. Authentication is owned by the locally installed Codex CLI.
+The PowerShell helper locates the official Codex process, reads the selector bounds and localized labels, invokes the requested native menu entries, and confirms the resulting selector text before reporting success.
 
-## Security defaults
+## Privacy and security
 
-- Electron `contextIsolation` and renderer sandbox are enabled.
-- Node integration is disabled in the renderer.
-- App Server uses local stdio rather than an exposed network port.
-- New threads use `workspace-write`, limited to the selected project.
-- Command and file-change approvals are shown in the UI.
+- No API key is requested.
+- No ChatGPT or Codex authentication token is accessed.
+- No conversation content is sent anywhere by this project.
+- UI automation is limited to the native model and reasoning controls.
 
-## Roadmap
+## Contributing
 
-- Thread history and resume/fork controls
-- Rich command and diff views
-- Permission-profile selector
-- Images and file mentions
-- Automatic protocol type generation from the installed Codex version
-- Signed release builds for macOS, Windows, and Linux
+Issues and pull requests are welcome, especially for accessibility-name changes introduced by new Codex desktop releases.
 
 ## Disclaimer
 
-This is an independent, unofficial project. It is not affiliated with, endorsed by, or sponsored by OpenAI.
-
-Codex and OpenAI are trademarks of OpenAI. This project does not use OpenAI logos or claim to be an official client.
+This independent project is not affiliated with, endorsed by, or sponsored by OpenAI. Codex and OpenAI are trademarks of OpenAI.
 
 ## License
 

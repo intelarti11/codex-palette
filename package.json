@@ -1,10 +1,24 @@
 {
   "name": "codex-palette",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "private": true,
-  "description": "An unofficial desktop client for Codex App Server with a visual model and reasoning-effort selector.",
+  "description": "A transparent visual overlay that drives the native Codex model and reasoning selector on Windows.",
   "author": "intelarti11",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/intelarti11/codex-palette.git"
+  },
+  "homepage": "https://github.com/intelarti11/codex-palette#readme",
+  "bugs": "https://github.com/intelarti11/codex-palette/issues",
+  "keywords": [
+    "codex",
+    "overlay",
+    "model-selector",
+    "electron",
+    "windows"
+  ],
+  "os": ["win32"],
   "type": "module",
   "main": "dist-electron/main.js",
   "scripts": {
@@ -36,8 +50,8 @@
     "vitest": "^4.1.10"
   },
   "build": {
-    "appId": "dev.codexpalette.app",
-    "productName": "Codex Palette",
+    "appId": "dev.codexpalette.overlay",
+    "productName": "Codex Palette Overlay",
     "files": [
       "dist/**/*",
       "dist-electron/**/*",
@@ -46,16 +60,14 @@
     "directories": {
       "output": "release"
     },
-    "mac": {
-      "category": "public.app-category.developer-tools",
-      "target": "dmg"
-    },
+    "extraResources": [
+      {
+        "from": "electron/native-overlay.ps1",
+        "to": "native-overlay.ps1"
+      }
+    ],
     "win": {
       "target": "nsis"
-    },
-    "linux": {
-      "target": "AppImage",
-      "category": "Development"
     }
   }
 }

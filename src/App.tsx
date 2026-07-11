@@ -1,392 +1,254 @@
 import {
-  Bell,
-  Bot,
-  Bug,
+  Check,
   ChevronDown,
-  Code2,
-  GitBranch,
-  Hammer,
-  SearchCode,
+  Flame,
+  GripVertical,
+  Moon,
+  RotateCcw,
   Sparkles,
+  Sprout,
+  Sun,
+  Waves,
+  X,
 } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ApprovalDialog } from './components/ApprovalDialog'
-import { Composer } from './components/Composer'
-import { ModelPalette } from './components/ModelPalette'
-import { CodexClient } from './lib/codex-client'
-import { demoModels } from './lib/demo-models'
-import type {
-  ApprovalRequest,
-  ChatMessage,
-  CodexModel,
-  SelectedModel,
-  ThreadStartResponse,
-  TurnStartResponse,
-} from './types'
+import { useCallback, useEffect, useRef, useState, type MouseEvent, type PointerEvent } from 'react'
 
-const starterCards = [
-  {
-    icon: SearchCode,
-    title: 'Explore and understand code',
-    prompt: 'Explore this repository and explain its architecture, main modules, and important workflows.',
-    tone: 'blue',
-  },
-  {
-    icon: Hammer,
-    title: 'Build a new feature, app, or tool',
-    prompt: 'Inspect this project and propose a useful feature. Then implement it with tests.',
-    tone: 'indigo',
-  },
-  {
-    icon: Code2,
-    title: 'Review code and suggest changes',
-    prompt: 'Review the current codebase and suggest the highest-impact improvements, with concrete patches.',
-    tone: 'green',
-  },
-  {
-    icon: Bug,
-    title: 'Fix issues and failures',
-    prompt: 'Run the relevant checks, find the most important failure, and fix it safely.',
-    tone: 'orange',
-  },
-]
+type Selection = { modelIndex: number; effortIndex: number }
+type DragState = {
+  pointerId: number
+  startX: number
+  startY: number
+  latestX: number
+  latestY: number
+  origin: { x: number; y: number } | null
+  dragging: boolean
+}
 
-const makeId = () => crypto.randomUUID?.() ?? `${Date.now()}-${Math.random()}`
+const models = [
+  { name: '5.6 Sol', icon: Sun, tone: 'solar', efforts: [0, 1, 2, 3, 4] },
+  { name: '5.6 Terra', icon: Sprout, tone: 'terra', efforts: [0, 1, 2, 3, 4] },
+  { name: '5.6 Luna', icon: Moon, tone: 'luna', efforts: [0, 1, 2, 3] },
+  { name: '5.5', icon: Waves, tone: 'ocean', efforts: [0, 1, 2, 3] },
+  { name: '5.4', icon: Flame, tone: 'ember', efforts: [0, 1, 2, 3] },
+  { name: '5.4 Mini', icon: Sparkles, tone: 'rose', efforts: [0, 1, 2, 3] },
+] as const
+
+const fallbackEfforts = ['Léger', 'Moyen', 'Élevé', 'Très élevé', 'Ultra']
+const storageKey = 'codex-palette-overlay.selection.v1'
+
+const readSelection = (): Selection => {
+  try {
+    const value = JSON.parse(localStorage.getItem(storageKey) ?? '{}') as Partial<Selection>
+    if (Number.isInteger(value.modelIndex) && Number.isInteger(value.effortIndex)) {
+      return { modelIndex: value.modelIndex as number, effortIndex: value.effortIndex as number }
+    }
+  } catch {
+    // Use the currently observed native default.
+  }
+  return { modelIndex: 0, effortIndex: 3 }
+}
 
 export default function App() {
-  const clientRef = useRef<CodexClient | null>(null)
-  const threadIdRef = useRef<string | null>(null)
-  const turnIdRef = useRef<string | null>(null)
-  const assistantItemIdRef = useRef<string | null>(null)
-
-  const [models, setModels] = useState<CodexModel[]>(demoModels)
-  const [selected, setSelected] = useState<SelectedModel>({
-    model: demoModels.find((model) => model.isDefault) ?? demoModels[0],
-    effort: demoModels.find((model) => model.isDefault)?.defaultReasoningEffort ?? 'medium',
-  })
-  const [projectPath, setProjectPath] = useState<string | null>(null)
-  const [paletteOpen, setPaletteOpen] = useState(false)
-  const [connection, setConnection] = useState<'connecting' | 'live' | 'demo'>('connecting')
-  const [version, setVersion] = useState<string | null>(null)
+  const [open, setOpen] = useState(false)
+  const [selection, setSelection] = useState<Selection>(readSelection)
   const [busy, setBusy] = useState(false)
-  const [messages, setMessages] = useState<ChatMessage[]>([])
-  const [approval, setApproval] = useState<ApprovalRequest | null>(null)
-  const [error, setError] = useState<string | null>(null)
-
-  const defaultSelectionFor = useCallback((catalog: CodexModel[]) => {
-    const model = catalog.find((candidate) => candidate.isDefault) ?? catalog[0]
-    return { model, effort: model.defaultReasoningEffort }
-  }, [])
+  const [notice, setNotice] = useState<string | null>(null)
+  const [efforts, setEfforts] = useState<string[]>(fallbackEfforts)
+  const dragState = useRef<DragState | null>(null)
+  const dragFrame = useRef<number | null>(null)
+  const lastDragEnd = useRef(0)
 
   useEffect(() => {
-    const client = new CodexClient()
-    clientRef.current = client
-
-    const removeNotification = client.onNotification((notification) => {
-      const params = (notification.params ?? {}) as Record<string, unknown>
-
-      if (notification.method === 'item/agentMessage/delta') {
-        const itemId = String(params.itemId ?? '')
-        const delta = String(params.delta ?? '')
-        assistantItemIdRef.current = itemId
-        setMessages((current) => {
-          const existing = current.findIndex((message) => message.id === itemId)
-          if (existing >= 0) {
-            return current.map((message, index) =>
-              index === existing ? { ...message, text: message.text + delta, pending: true } : message,
-            )
-          }
-          return [...current, { id: itemId || makeId(), role: 'assistant', text: delta, pending: true }]
-        })
-      }
-
-      if (notification.method === 'item/completed') {
-        const item = params.item as Record<string, unknown> | undefined
-        if (item?.type === 'agentMessage') {
-          const id = String(item.id ?? assistantItemIdRef.current ?? makeId())
-          const text = String(item.text ?? '')
-          setMessages((current) => {
-            const found = current.some((message) => message.id === id)
-            if (!found) return [...current, { id, role: 'assistant', text }]
-            return current.map((message) =>
-              message.id === id ? { ...message, text: text || message.text, pending: false } : message,
-            )
-          })
-        }
-
-        if (item?.type === 'commandExecution') {
-          const command = String(item.command ?? 'Command completed')
-          const status = String(item.status ?? 'completed')
-          setMessages((current) => [
-            ...current,
-            { id: makeId(), role: 'system', text: `${status}: ${command}` },
-          ])
-        }
-      }
-
-      if (notification.method === 'turn/completed') {
-        setBusy(false)
-        turnIdRef.current = null
-        assistantItemIdRef.current = null
-      }
-
-      if (notification.method === 'error') {
-        setError(String(params.message ?? 'Codex reported an error.'))
-        setBusy(false)
-      }
+    let active = true
+    void window.codexOverlay?.getLabels().then((labels) => {
+      if (active && labels.efforts.length === 5) setEfforts(labels.efforts)
     })
-
-    const removeServerRequest = client.onServerRequest((request) => {
-      if (request.method.includes('requestApproval')) {
-        setApproval({
-          id: request.id,
-          method: request.method,
-          params: (request.params ?? {}) as Record<string, unknown>,
-        })
-      }
-    })
-
-    const connect = async () => {
-      if (!window.codexPalette) {
-        setConnection('demo')
-        return
-      }
-
-      try {
-        const bridgeVersion = await window.codexPalette.version()
-        setVersion(bridgeVersion)
-        await client.connect()
-        const catalog = await client.listModels()
-        if (catalog.data.length > 0) {
-          setModels(catalog.data)
-          setSelected(defaultSelectionFor(catalog.data))
-        }
-        setConnection('live')
-      } catch (connectError) {
-        setConnection('demo')
-        setError(
-          connectError instanceof Error
-            ? `${connectError.message} Using the built-in preview catalog.`
-            : 'Could not connect to Codex. Using demo mode.',
-        )
-      }
-    }
-
-    void connect()
-
     return () => {
-      removeNotification()
-      removeServerRequest()
-      void client.disconnect()
+      active = false
     }
-  }, [defaultSelectionFor])
-
-  const chooseProject = useCallback(async () => {
-    if (!window.codexPalette) {
-      setProjectPath('/demo/codex-palette')
-      return '/demo/codex-palette'
-    }
-    const path = await window.codexPalette.selectProject()
-    if (path) {
-      setProjectPath(path)
-      threadIdRef.current = null
-      setMessages([])
-    }
-    return path
   }, [])
 
-  const simulateDemoTurn = useCallback((prompt: string) => {
-    setBusy(true)
-    const responseId = makeId()
-    setTimeout(() => {
-      setMessages((current) => [
-        ...current,
-        {
-          id: responseId,
-          role: 'assistant',
-          text: `Demo mode is active. The visual model palette selected ${selected.model.displayName} with ${selected.effort} reasoning. Install and sign in to Codex CLI to run this prompt against your project.`,
-        },
-      ])
-      setBusy(false)
-    }, 650)
-  }, [selected])
+  const moveWindow = useCallback(() => {
+    dragFrame.current = null
+    const state = dragState.current
+    if (!state?.dragging || !state.origin) return
+    window.codexOverlay?.dragTo({
+      x: state.origin.x + state.latestX - state.startX,
+      y: state.origin.y + state.latestY - state.startY,
+    })
+  }, [])
 
-  const sendPrompt = useCallback(
-    async (prompt: string) => {
-      setError(null)
-      setPaletteOpen(false)
-      setMessages((current) => [...current, { id: makeId(), role: 'user', text: prompt }])
-
-      if (connection !== 'live') {
-        simulateDemoTurn(prompt)
-        return
-      }
-
-      let cwd = projectPath
-      if (!cwd) cwd = await chooseProject()
-      if (!cwd) {
-        setError('Choose a project folder before starting a Codex turn.')
-        return
-      }
-
-      const client = clientRef.current
-      if (!client) return
-
-      try {
-        setBusy(true)
-        if (!threadIdRef.current) {
-          const response = await client.request<ThreadStartResponse>('thread/start', {
-            model: selected.model.model,
-            cwd,
-            sandbox: 'workspace-write',
-          })
-          threadIdRef.current = response.thread.id
-        }
-
-        const response = await client.request<TurnStartResponse>('turn/start', {
-          threadId: threadIdRef.current,
-          input: [{ type: 'text', text: prompt, textElements: [] }],
-          model: selected.model.model,
-          effort: selected.effort,
-        })
-        turnIdRef.current = response.turn.id
-      } catch (sendError) {
-        setBusy(false)
-        setError(sendError instanceof Error ? sendError.message : 'Could not start the Codex turn.')
-      }
-    }, [chooseProject, connection, projectPath, selected, simulateDemoTurn],
-  )
-
-  const interrupt = useCallback(async () => {
-    const client = clientRef.current
-    if (connection !== 'live' || !client || !threadIdRef.current || !turnIdRef.current) {
-      setBusy(false)
-      return
+  const startWindowDrag = useCallback((event: PointerEvent<HTMLElement>) => {
+    if (event.button !== 0 || !window.codexOverlay) return
+    const state: DragState = {
+      pointerId: event.pointerId,
+      startX: event.screenX,
+      startY: event.screenY,
+      latestX: event.screenX,
+      latestY: event.screenY,
+      origin: null,
+      dragging: false,
     }
+    dragState.current = state
+    void window.codexOverlay.beginDrag().then((origin) => {
+      if (dragState.current !== state) return
+      state.origin = origin
+      if (state.dragging && dragFrame.current === null) {
+        dragFrame.current = requestAnimationFrame(moveWindow)
+      }
+    })
+  }, [moveWindow])
+
+  const continueWindowDrag = useCallback((event: PointerEvent<HTMLElement>) => {
+    const state = dragState.current
+    if (!state || state.pointerId !== event.pointerId) return
+    state.latestX = event.screenX
+    state.latestY = event.screenY
+    if (!state.dragging && Math.hypot(state.latestX - state.startX, state.latestY - state.startY) >= 5) {
+      state.dragging = true
+      event.currentTarget.setPointerCapture(event.pointerId)
+    }
+    if (state.dragging && state.origin && dragFrame.current === null) {
+      dragFrame.current = requestAnimationFrame(moveWindow)
+    }
+  }, [moveWindow])
+
+  const finishWindowDrag = useCallback((event: PointerEvent<HTMLElement>) => {
+    const state = dragState.current
+    if (!state || state.pointerId !== event.pointerId) return
+    if (dragFrame.current !== null) {
+      cancelAnimationFrame(dragFrame.current)
+      dragFrame.current = null
+      moveWindow()
+    }
+    if (state.dragging) lastDragEnd.current = performance.now()
+    dragState.current = null
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+    void window.codexOverlay?.endDrag()
+  }, [moveWindow])
+
+  const suppressClickAfterDrag = useCallback((event: MouseEvent<HTMLElement>) => {
+    if (performance.now() - lastDragEnd.current >= 250) return
+    event.preventDefault()
+    event.stopPropagation()
+  }, [])
+
+  const dragHandlers = {
+    onPointerDownCapture: startWindowDrag,
+    onPointerMoveCapture: continueWindowDrag,
+    onPointerUpCapture: finishWindowDrag,
+    onPointerCancelCapture: finishWindowDrag,
+    onClickCapture: suppressClickAfterDrag,
+  }
+
+  const toggle = useCallback(async () => {
+    const next = !open
+    setOpen(next)
+    await window.codexOverlay?.setOpen(next)
+  }, [open])
+
+  const apply = useCallback(async (next: Selection) => {
+    setBusy(true)
+    setNotice(null)
     try {
-      await client.request('turn/interrupt', {
-        threadId: threadIdRef.current,
-        turnId: turnIdRef.current,
-      })
+      await window.codexOverlay?.apply(next)
+      setSelection(next)
+      localStorage.setItem(storageKey, JSON.stringify(next))
+      setNotice(`${models[next.modelIndex].name} · ${efforts[next.effortIndex]}`)
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Le sélecteur natif n’a pas répondu.')
     } finally {
       setBusy(false)
     }
-  }, [connection])
+  }, [efforts])
 
-  const decideApproval = useCallback(
-    async (decision: 'accept' | 'acceptForSession' | 'decline' | 'cancel') => {
-      if (!approval) return
-      await clientRef.current?.respond(approval.id, { decision })
-      setApproval(null)
-    },
-    [approval],
-  )
+  const resetPosition = useCallback(async () => {
+    await window.codexOverlay?.resetPosition()
+    setNotice(null)
+  }, [])
 
-  const hasConversation = messages.length > 0
-  const connectionLabel = useMemo(() => {
-    if (connection === 'connecting') return 'Connecting'
-    if (connection === 'live') return version ? `Live · ${version}` : 'Live'
-    return 'Preview mode'
-  }, [connection, version])
+  const selectedModel = models[selection.modelIndex] ?? models[0]
+
+  if (!open) {
+    return (
+      <main className="overlay-closed" {...dragHandlers}>
+        <div className="drag-handle">
+          <GripVertical size={15} />
+        </div>
+        <button className={`native-trigger tone-${selectedModel.tone}`} type="button" onClick={() => void toggle()}>
+          <strong>{selectedModel.name}</strong>
+          <span>{efforts[selection.effortIndex]}</span>
+          <ChevronDown size={15} />
+        </button>
+      </main>
+    )
+  }
 
   return (
-    <main className="app-shell" onClick={() => paletteOpen && setPaletteOpen(false)}>
-      <header className="app-header">
-        <div className="brand">
-          <div className="brand-mark" aria-hidden="true">
-            <Sparkles size={23} />
-          </div>
-          <span>Codex Palette</span>
-          <ChevronDown size={16} />
-        </div>
-        <div className="header-actions">
-          <div className={`connection-pill ${connection}`}>
-            <span />
-            {connectionLabel}
-          </div>
-          <button className="header-icon" type="button" aria-label="Notifications">
-            <Bell size={20} />
-          </button>
-          <div className="avatar">CP</div>
-        </div>
-      </header>
-
-      <section className={`workspace ${hasConversation ? 'conversation-active' : ''}`}>
-        {!hasConversation ? (
-          <div className="welcome">
-            <div className="welcome-mark">
-              <Bot size={42} strokeWidth={1.45} />
-            </div>
-            <h1>What should we build?</h1>
-            <div className="starter-grid">
-              {starterCards.map(({ icon: Icon, title, prompt, tone }) => (
-                <button
-                  className={`starter-card ${tone}`}
-                  type="button"
-                  key={title}
-                  onClick={() => void sendPrompt(prompt)}
-                >
-                  <Icon size={24} strokeWidth={1.8} />
-                  <span>{title}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-        ) : (
-          <div className="conversation" aria-live="polite">
-            {messages.map((message) => (
-              <article className={`message ${message.role}`} key={message.id}>
-                <div className="message-role">
-                  {message.role === 'user' ? 'You' : message.role === 'assistant' ? selected.model.displayName : 'Tool'}
-                </div>
-                <div className="message-body">
-                  {message.text}
-                  {message.pending ? <span className="cursor" /> : null}
-                </div>
-              </article>
-            ))}
-          </div>
-        )}
-
-        {error ? (
-          <div className="error-banner" role="alert">
-            {error}
-            <button type="button" onClick={() => setError(null)}>
-              Dismiss
+    <main className="overlay-open" {...dragHandlers}>
+      <section className="palette-card" aria-label="Codex model palette">
+        <header className="palette-header">
+          <div className="header-actions">
+            <button type="button" onClick={() => void resetPosition()} aria-label="Reset position">
+              <RotateCcw size={14} />
+            </button>
+            <button type="button" onClick={() => void window.codexOverlay?.quit()} aria-label="Close overlay">
+              <X size={15} />
             </button>
           </div>
-        ) : null}
+        </header>
 
-        <div className="composer-area" onClick={(event) => event.stopPropagation()}>
-          {paletteOpen ? (
-            <ModelPalette
-              models={models}
-              selected={selected}
-              onSelect={(next) => {
-                setSelected(next)
-                setPaletteOpen(false)
-              }}
-            />
-          ) : null}
-          <Composer
-            projectPath={projectPath}
-            selected={selected}
-            paletteOpen={paletteOpen}
-            busy={busy}
-            disabled={connection === 'connecting'}
-            onTogglePalette={() => setPaletteOpen((open) => !open)}
-            onSelectProject={() => void chooseProject()}
-            onSend={(prompt) => void sendPrompt(prompt)}
-            onInterrupt={() => void interrupt()}
-          />
-          <div className="workspace-meta">
-            <span><GitBranch size={14} /> Local project</span>
-            <span>Unofficial client · Inspired by Karol (@KarolCodes)</span>
-          </div>
+        <div className="matrix">
+          <div className="matrix-corner" />
+          {models.map(({ name, icon: Icon, tone }) => (
+            <div className={`model-heading tone-${tone}`} key={name}>
+              <Icon size={16} />
+              <span>{name}</span>
+            </div>
+          ))}
+
+          {efforts.map((effort, effortIndex) => (
+            <div className="matrix-row" key={effort}>
+              <div className="effort-label">{effort}</div>
+              {models.map((model, modelIndex) => {
+                const supported = model.efforts.includes(effortIndex as never)
+                const selected = selection.modelIndex === modelIndex && selection.effortIndex === effortIndex
+                return (
+                  <button
+                    className={`effort-cell tone-${model.tone} ${selected ? 'selected' : ''}`}
+                    type="button"
+                    key={`${model.name}-${effort}`}
+                    disabled={!supported || busy}
+                    aria-label={`${model.name}, ${effort}`}
+                    aria-pressed={selected}
+                    style={{ '--level': effortIndex + 1 } as React.CSSProperties}
+                    onClick={() => void apply({ modelIndex, effortIndex })}
+                  >
+                    {selected ? <Check size={17} /> : null}
+                  </button>
+                )
+              })}
+            </div>
+          ))}
         </div>
+
+        <footer className="palette-footer">
+          {notice ? <span className="notice">{notice}</span> : null}
+        </footer>
       </section>
 
-      {approval ? <ApprovalDialog request={approval} onDecision={(decision) => void decideApproval(decision)} /> : null}
+      <div className="open-trigger-row">
+        <div className="drag-handle open-grip">
+          <GripVertical size={15} />
+        </div>
+        <button className={`native-trigger tone-${selectedModel.tone}`} type="button" onClick={() => void toggle()}>
+          <strong>{selectedModel.name}</strong>
+          <span>{efforts[selection.effortIndex]}</span>
+          <ChevronDown size={15} />
+        </button>
+      </div>
     </main>
   )
 }

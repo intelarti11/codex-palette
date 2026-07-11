@@ -1,27 +1,13 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
-const bridge = {
-  start: () => ipcRenderer.invoke('codex:start'),
-  stop: () => ipcRenderer.invoke('codex:stop'),
-  send: (payload: unknown) => ipcRenderer.invoke('codex:send', payload),
-  version: () => ipcRenderer.invoke('codex:version'),
-  selectProject: () => ipcRenderer.invoke('project:select'),
-  openExternal: (url: string) => ipcRenderer.invoke('external:open', url),
-  onMessage: (callback: (line: string) => void) => {
-    const listener = (_event: Electron.IpcRendererEvent, line: string) => callback(line)
-    ipcRenderer.on('codex:message', listener)
-    return () => ipcRenderer.removeListener('codex:message', listener)
-  },
-  onLog: (callback: (line: string) => void) => {
-    const listener = (_event: Electron.IpcRendererEvent, line: string) => callback(line)
-    ipcRenderer.on('codex:log', listener)
-    return () => ipcRenderer.removeListener('codex:log', listener)
-  },
-  onStatus: (callback: (status: unknown) => void) => {
-    const listener = (_event: Electron.IpcRendererEvent, status: unknown) => callback(status)
-    ipcRenderer.on('codex:status', listener)
-    return () => ipcRenderer.removeListener('codex:status', listener)
-  },
-}
-
-contextBridge.exposeInMainWorld('codexPalette', bridge)
+contextBridge.exposeInMainWorld('codexOverlay', {
+  setOpen: (open: boolean) => ipcRenderer.invoke('overlay:set-open', open),
+  getLabels: () => ipcRenderer.invoke('overlay:get-labels'),
+  beginDrag: () => ipcRenderer.invoke('overlay:begin-drag'),
+  dragTo: (position: { x: number; y: number }) => ipcRenderer.send('overlay:drag-to', position),
+  endDrag: () => ipcRenderer.invoke('overlay:end-drag'),
+  apply: (selection: { modelIndex: number; effortIndex: number }) =>
+    ipcRenderer.invoke('overlay:apply', selection),
+  resetPosition: () => ipcRenderer.invoke('overlay:reset-position'),
+  quit: () => ipcRenderer.invoke('overlay:quit'),
+})
