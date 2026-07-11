@@ -3,8 +3,11 @@ dist/
 dist-electron/
 release/
 coverage/
+artifacts/
 *.log
 .DS_Store
 .vscode/
 .idea/
 *.tsbuildinfo
+native/**/bin/
+native/**/obj/

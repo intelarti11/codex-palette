@@ -1,0 +1,54 @@
+name: Native Windows
+
+on:
+  push:
+    branches:
+      - main
+      - agent/native-wpf-port
+    paths:
+      - "native/**"
+      - ".github/workflows/native-windows.yml"
+  pull_request:
+    paths:
+      - "native/**"
+      - ".github/workflows/native-windows.yml"
+  workflow_dispatch:
+
+jobs:
+  test-and-publish:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Restore
+        run: dotnet restore native/CodexPalette.Native.sln
+
+      - name: Test
+        run: dotnet test native/CodexPalette.Native.sln --configuration Release --no-restore
+
+      - name: Publish portable executable
+        run: >-
+          dotnet publish native/CodexPalette.Native/CodexPalette.Native.csproj
+          --configuration Release
+          --runtime win-x64
+          --self-contained true
+          --no-restore
+          --output artifacts/native-win-x64
+          -p:PublishSingleFile=true
+
+      - name: Show executable size
+        shell: pwsh
+        run: Get-Item artifacts/native-win-x64/CodexPalette.exe | Select-Object Name, Length
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CodexPalette-native-win-x64
+          path: artifacts/native-win-x64/CodexPalette.exe
+          if-no-files-found: error
