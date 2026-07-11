@@ -10,18 +10,20 @@ public partial class MainWindow : Window
 {
     private readonly MainViewModel _viewModel;
     private readonly SettingsStore _settingsStore;
+    private readonly CodexAutomationService _automation;
     private readonly CodexWindowTracker _tracker;
     private Point _anchor;
     private Point? _selectorAnchor;
     private Vector? _manualOffset;
     private bool _dragging;
-    private DateTime _lastNativeRefresh = DateTime.MinValue;
 
     public MainWindow(MainViewModel viewModel, CodexAutomationService automation, SettingsStore settingsStore)
     {
         InitializeComponent();
         _viewModel = viewModel;
         _settingsStore = settingsStore;
+        _automation = automation;
+        _automation.PassiveStateChanged += Automation_PassiveStateChanged;
         _tracker = new CodexWindowTracker(automation);
         _tracker.StateChanged += Tracker_StateChanged;
         DataContext = _viewModel;
@@ -43,7 +45,17 @@ public partial class MainWindow : Window
         await _viewModel.RefreshAsync();
     }
 
-    private void Window_Closed(object? sender, EventArgs e) => _tracker.Dispose();
+    private void Automation_PassiveStateChanged(object? sender, EventArgs e)
+    {
+        _ = Dispatcher.InvokeAsync(() => _viewModel.RefreshAsync());
+    }
+
+    private void Window_Closed(object? sender, EventArgs e)
+    {
+        _automation.PassiveStateChanged -= Automation_PassiveStateChanged;
+        _tracker.Dispose();
+        _automation.Dispose();
+    }
 
     private void Window_KeyDown(object sender, KeyEventArgs e)
     {
