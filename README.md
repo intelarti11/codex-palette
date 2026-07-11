@@ -27,21 +27,22 @@ The integration depends on accessibility names exposed by the current Codex desk
 
 ## Install
 
-1. Open the [latest GitHub Release](https://github.com/intelarti11/codex-palette/releases/latest).
-2. Download the `Codex.Palette.Overlay.Setup.*.exe` file attached to that release.
-3. Run the installer, then launch **Codex Palette Overlay** from the Windows Start menu.
-4. Open the official Codex app; the overlay will align itself with the native selector.
-
-Windows SmartScreen may display a warning because the community installer is not code-signed yet.
-
-## Run from source
+The current community version is available from the `main` branch. Older installers on the Releases page may not yet include silent selection and the localized speed control.
 
 ```powershell
+git clone https://github.com/intelarti11/codex-palette.git
+cd codex-palette
 npm install
 npm run dev
 ```
 
-Keep the official Codex app open. The capsule will align itself with the native selector. Click the capsule to open the matrix, or hold and drag anywhere on the overlay to move it.
+To build a Windows installer locally:
+
+```powershell
+npm run dist
+```
+
+The NSIS installer is written to `release/`. Windows SmartScreen may display a warning because community builds are not code-signed.
 
 ## Validate
 
@@ -49,14 +50,6 @@ Keep the official Codex app open. The capsule will align itself with the native 
 npm test
 npm run build
 ```
-
-## Build the Windows installer
-
-```powershell
-npm run dist
-```
-
-The NSIS installer is written to `release/`.
 
 ## How it works
 
