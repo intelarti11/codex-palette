@@ -1,8 +1,8 @@
 {
   "name": "codex-palette",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
-  "description": "A transparent visual overlay that drives the native Codex model and reasoning selector on Windows.",
+  "description": "A transparent visual overlay that drives the native Codex model, reasoning, and speed selectors on Windows.",
   "author": "intelarti11",
   "license": "Apache-2.0",
   "repository": {
@@ -18,7 +18,9 @@
     "electron",
     "windows"
   ],
-  "os": ["win32"],
+  "os": [
+    "win32"
+  ],
   "type": "module",
   "main": "dist-electron/main.js",
   "scripts": {
