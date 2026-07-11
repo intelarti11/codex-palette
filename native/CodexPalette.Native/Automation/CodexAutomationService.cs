@@ -98,68 +98,56 @@ public sealed partial class CodexAutomationService
 
     private NativePaletteState ReadStateCore(CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         using var process = TryFindCodexProcess() ??
             throw new AutomationUnavailableException("The official Codex window could not be found.");
 
-        AutomationContext? context = null;
-        SpeedDescriptor? speed = null;
-        try
+        if (!TryReadCurrentSelection(process.Id, out var model, out var effort))
         {
-            context = GetContext(process.Id, cancellationToken);
-
-            MenuOptions effortOptions;
-            try
-            {
-                effortOptions = GetMenuOptions(
-                    process.Id,
-                    context.EffortMenu,
-                    minimum: 4,
-                    maximum: 5,
-                    effort: true,
-                    cancellationToken);
-            }
-            finally
-            {
-                CloseSilent(context.EffortMenu);
-            }
-
-            var efforts = effortOptions.Labels;
-            var modelIndex = Array.FindIndex(ModelNames, model => model == context.Model);
-            var effortIndex = FindLabelIndex(efforts, context.Effort);
-
-            var speedLabel = string.Empty;
-            IReadOnlyList<string> speeds = Array.Empty<string>();
-            var speedIndex = -1;
-
-            try
-            {
-                speed = GetSpeed(process.Id, context, cancellationToken);
-                speedLabel = speed.Label;
-                speeds = speed.Labels;
-                speedIndex = speed.SelectedIndex;
-            }
-            catch
-            {
-                // Speed is optional when the current Codex build does not expose it.
-            }
-            finally
-            {
-                CloseSilent(speed?.Control);
-            }
-
-            return new NativePaletteState(
-                efforts,
-                speedLabel,
-                speeds,
-                Math.Max(modelIndex, 0),
-                Math.Max(effortIndex, 0),
-                speedIndex);
+            throw new AutomationUnavailableException("The current Codex model and effort could not be read.");
         }
-        finally
+
+        // This method never expands or invokes a control. It only inspects the existing tree.
+        LearnFromPassiveTree(process.Id, effort);
+        var cached = GetCachedDiscovery();
+        var modelIndex = Array.FindIndex(ModelNames, value => value == model);
+        var effortIndex = cached.Efforts.Count is 4 or 5
+            ? FindLabelIndex(cached.Efforts, effort)
+            : -1;
+        var speedIndex = FindPassiveSpeedIndex(process.Id, cached.Speeds);
+
+        return new NativePaletteState(
+            cached.Efforts,
+            cached.SpeedLabel,
+            cached.Speeds,
+            Math.Max(modelIndex, 0),
+            effortIndex,
+            speedIndex);
+    }
+
+    private static int FindPassiveSpeedIndex(int processId, IReadOnlyList<string> labels)
+    {
+        if (labels.Count != 2)
         {
-            CloseSilent(speed?.Control);
-            CloseContext(context);
+            return -1;
         }
+
+        var trigger = FindTriggerForLabels(processId, labels);
+        if (trigger is null)
+        {
+            return -1;
+        }
+
+        var values = GetElementStrings(trigger);
+        for (var index = 0; index < labels.Count; index++)
+        {
+            if (values.Any(value => value.EndsWith(labels[index], StringComparison.Ordinal)))
+            {
+                return index;
+            }
+        }
+
+        return -1;
     }
 
     private SelectionResult ApplySelectionCore(
@@ -192,13 +180,8 @@ public sealed partial class CodexAutomationService
                 maximum: 10,
                 effort: false,
                 cancellationToken);
-            var targetIndex = modelOptions.Labels
-                .Select((label, index) => (label, index))
-                .FirstOrDefault(item => string.Equals(item.label, modelName, StringComparison.Ordinal))
-                .index;
-
-            if (targetIndex < 0 || targetIndex >= modelOptions.Items.Count ||
-                !string.Equals(modelOptions.Labels[targetIndex], modelName, StringComparison.Ordinal))
+            var targetIndex = FindExactLabelIndex(modelOptions.Labels, modelName);
+            if (targetIndex < 0)
             {
                 throw new AutomationUnavailableException($"The model '{modelName}' is not exposed by Codex.");
             }
@@ -230,6 +213,7 @@ public sealed partial class CodexAutomationService
                 maximum: 5,
                 effort: true,
                 cancellationToken);
+            UpdateCachedEfforts(effortOptions.Labels);
             if (effortIndex >= effortOptions.Items.Count)
             {
                 throw new InvalidOperationException("The requested reasoning level is not exposed by Codex.");
@@ -267,51 +251,38 @@ public sealed partial class CodexAutomationService
 
         AutomationContext? context = null;
         SpeedDescriptor? speed = null;
-        string label;
         try
         {
             context = GetContext(process.Id, cancellationToken);
             speed = GetSpeed(process.Id, context, cancellationToken);
-            label = speed.Labels[speedIndex];
+            if (speedIndex >= speed.Items.Count)
+            {
+                throw new AutomationUnavailableException("The requested speed is not exposed by Codex.");
+            }
+
+            var label = speed.Labels[speedIndex];
+            UpdateCachedSpeed(speed.Label, speed.Labels);
             SelectSilent(speed.Items[speedIndex], cancellationToken);
+            return new SpeedSelectionResult(speedIndex, label);
         }
         finally
         {
             CloseSilent(speed?.Control);
             CloseContext(context);
         }
+    }
 
-        var deadline = DateTime.UtcNow.AddMilliseconds(2200);
-        while (DateTime.UtcNow < deadline)
+    private static int FindExactLabelIndex(IReadOnlyList<string> labels, string target)
+    {
+        for (var index = 0; index < labels.Count; index++)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            context = null;
-            speed = null;
-            try
+            if (string.Equals(labels[index], target, StringComparison.Ordinal))
             {
-                context = GetContext(process.Id, cancellationToken);
-                speed = GetSpeed(process.Id, context, cancellationToken);
-                var ownerName = TextNormalizer.Normalize(speed.Control.Current.Name);
-                if (speed.SelectedIndex == speedIndex ||
-                    ownerName.EndsWith(label, StringComparison.Ordinal))
-                {
-                    return new SpeedSelectionResult(speedIndex, label);
-                }
+                return index;
             }
-            catch
-            {
-                // Codex may rebuild the popup tree between confirmation attempts.
-            }
-            finally
-            {
-                CloseSilent(speed?.Control);
-                CloseContext(context);
-            }
-
-            Thread.Sleep(60);
         }
 
-        throw new AutomationUnavailableException("Codex did not confirm the requested speed.");
+        return -1;
     }
 }
 
