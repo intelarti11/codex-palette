@@ -6,7 +6,8 @@ public sealed record NativePaletteState(
     IReadOnlyList<string> Speeds,
     int ModelIndex,
     int EffortIndex,
-    int SpeedIndex);
+    int SpeedIndex,
+    string CurrentEffort);
 
 public sealed record SelectionResult(string DisplayName);
 
