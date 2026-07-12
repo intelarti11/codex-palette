@@ -25,5 +25,24 @@ public sealed partial class CodexAutomationService
                 eventId,
                 element,
                 handler);
+
+        public static void AddStructureChangedEventHandler(
+            AutomationElement element,
+            TreeScope scope,
+            StructureChangedEventHandler handler) =>
+            throw new NotSupportedException(
+                "StructureChanged subscriptions are unavailable in this UI Automation client build.");
+
+        public static void RemoveStructureChangedEventHandler(
+            AutomationElement element,
+            StructureChangedEventHandler handler)
+        {
+            // The corresponding subscription is intentionally unsupported.
+        }
+    }
+
+    private static class LegacyIAccessiblePattern
+    {
+        public static AutomationPattern Pattern { get; } = AutomationPattern.LookupById(10018);
     }
 }
