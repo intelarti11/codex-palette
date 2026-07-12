@@ -48,6 +48,7 @@ public sealed partial class CodexAutomationService
                 .ToArray())
             .ToArray();
 
+        ConfigureThreadCatalog(catalog, effortOptions);
         UpdateCachedMatrix(models, efforts, supported);
         UpdateSpeedFromCatalog(catalog);
 
@@ -86,7 +87,7 @@ public sealed partial class CodexAutomationService
             "none" => french ? "Aucun" : "None",
             "minimal" => "Minimal",
             "low" => french ? "Léger" : "Low",
-            "medium" => french ? "Moyen" : "Medium",
+            "medium" => french ? "Standard" : "Medium",
             "high" => french ? "Élevé" : "High",
             "xhigh" => french ? "Très élevé" : "Extra high",
             "max" => french ? "Maximum" : "Max",
@@ -97,27 +98,8 @@ public sealed partial class CodexAutomationService
 
     private void UpdateSpeedFromCatalog(CodexCatalog catalog)
     {
-        var tiers = new List<CodexCatalogServiceTier>();
-        var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var tier in catalog.Models.SelectMany(static model => model.ServiceTiers))
-        {
-            if (ids.Add(tier.Id))
-            {
-                tiers.Add(tier);
-            }
-        }
-
-        if (tiers.Count < 2)
-        {
-            return;
-        }
-
-        var standard = tiers.FirstOrDefault(tier =>
-            string.Equals(tier.Id, "standard", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(tier.Id, "default", StringComparison.OrdinalIgnoreCase));
-        var alternate = tiers.FirstOrDefault(tier => standard is null ||
-            !string.Equals(tier.Id, standard.Id, StringComparison.OrdinalIgnoreCase));
-        if (standard is null || alternate is null)
+        var tiers = GetDesktopSpeedTiers(catalog);
+        if (tiers.Count != 2)
         {
             return;
         }
@@ -128,6 +110,6 @@ public sealed partial class CodexAutomationService
             StringComparison.OrdinalIgnoreCase)
             ? "Vitesse"
             : "Speed";
-        UpdateCachedSpeed(speedLabel, new[] { standard.DisplayName, alternate.DisplayName });
+        UpdateCachedSpeed(speedLabel, new[] { tiers[0].DisplayName, tiers[1].DisplayName });
     }
 }
