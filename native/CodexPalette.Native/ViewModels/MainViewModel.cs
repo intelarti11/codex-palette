@@ -12,6 +12,8 @@ public sealed class MainViewModel : ObservableObject
     private readonly SemaphoreSlim _operationLock = new(1, 1);
     private bool _isOpen;
     private bool _isBusy;
+    private bool _isThreadLinked;
+    private string? _linkedThreadLabel;
     private string? _notice;
     private int _selectedModelIndex;
     private int _selectedEffortIndex = -1;
@@ -45,6 +47,22 @@ public sealed class MainViewModel : ObservableObject
         get => _isBusy;
         private set => SetProperty(ref _isBusy, value);
     }
+
+    public bool IsThreadLinked
+    {
+        get => _isThreadLinked;
+        private set
+        {
+            if (SetProperty(ref _isThreadLinked, value))
+            {
+                OnPropertyChanged(nameof(ThreadLinkStatus));
+            }
+        }
+    }
+
+    public string ThreadLinkStatus => IsThreadLinked
+        ? $"Fil lié : {_linkedThreadLabel ?? "actif"}"
+        : "Lier le fil actif (aucun menu natif)";
 
     public string? Notice
     {
@@ -89,10 +107,12 @@ public sealed class MainViewModel : ObservableObject
         {
             var state = await _automation.ReadStateAsync();
             ApplyNativeState(state);
+            SyncThreadLinkState();
             Notice = null;
         }
         catch (Exception exception)
         {
+            SyncThreadLinkState();
             if (showErrors)
             {
                 Notice = exception.Message;
@@ -112,9 +132,47 @@ public sealed class MainViewModel : ObservableObject
         try
         {
             ApplyNativeState(await _automation.DiscoverPaletteAsync());
+            SyncThreadLinkState();
         }
         catch (Exception exception)
         {
+            SyncThreadLinkState();
+            Notice = exception.Message;
+        }
+        finally
+        {
+            IsBusy = false;
+            _operationLock.Release();
+        }
+    }
+
+    public async Task ToggleThreadLinkAsync()
+    {
+        if (IsBusy)
+        {
+            return;
+        }
+
+        await _operationLock.WaitAsync();
+        IsBusy = true;
+        Notice = null;
+        try
+        {
+            if (_automation.IsThreadLinked)
+            {
+                _automation.UnlinkActiveThread();
+                SyncThreadLinkState();
+                Notice = "Fil délié.";
+                return;
+            }
+
+            var result = await _automation.LinkActiveThreadAsync();
+            SetThreadLinkState(result.IsLinked, result.ThreadLabel);
+            Notice = result.Message;
+        }
+        catch (Exception exception)
+        {
+            SyncThreadLinkState();
             Notice = exception.Message;
         }
         finally
@@ -147,11 +205,13 @@ public sealed class MainViewModel : ObservableObject
             OnPropertyChanged(nameof(SelectedModelName));
             OnPropertyChanged(nameof(SelectedEffortName));
             OnPropertyChanged(nameof(SelectedAccentBrush));
+            SyncThreadLinkState();
             Notice = null;
             return true;
         }
         catch (Exception exception)
         {
+            SyncThreadLinkState();
             Notice = exception.Message;
             return false;
         }
@@ -177,10 +237,12 @@ public sealed class MainViewModel : ObservableObject
             var result = await _automation.ApplySpeedAsync(option.Index);
             _selectedSpeedIndex = result.Index;
             UpdateSpeedSelection();
+            SyncThreadLinkState();
             Notice = null;
         }
         catch (Exception exception)
         {
+            SyncThreadLinkState();
             Notice = exception.Message;
         }
         finally
@@ -191,6 +253,16 @@ public sealed class MainViewModel : ObservableObject
     }
 
     public void ClearNotice() => Notice = null;
+
+    private void SyncThreadLinkState() =>
+        SetThreadLinkState(_automation.IsThreadLinked, _automation.LinkedThreadLabel);
+
+    private void SetThreadLinkState(bool linked, string? label)
+    {
+        _linkedThreadLabel = label;
+        IsThreadLinked = linked;
+        OnPropertyChanged(nameof(ThreadLinkStatus));
+    }
 
     private void ApplyNativeState(NativePaletteState state)
     {
