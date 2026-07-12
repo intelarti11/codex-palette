@@ -28,6 +28,40 @@ internal static class PopupDiagnostics
         }
     }
 
+    internal static void CaptureAfterExpand(AutomationElement expandedControl)
+    {
+        if (!IsChatGptElement(expandedControl))
+        {
+            return;
+        }
+
+        try
+        {
+            var menu = FindNearestMenu(expandedControl);
+            if (menu is null || !HasDirectCheckBox(menu))
+            {
+                return;
+            }
+
+            // Chromium updates this selector inline rather than opening another native popup.
+            Thread.Sleep(140);
+            DiagnosticLog.Write("ADVANCED EXPANDED CONTROL: " + Describe(expandedControl));
+            DiagnosticLog.Write("ADVANCED MENU ROOT: " + Describe(menu));
+            DumpCollection(
+                "ADVANCED DIRECT CHILD",
+                menu.FindAll(TreeScope.Children, Condition.TrueCondition),
+                60);
+            DumpCollection(
+                "ADVANCED DESCENDANT",
+                menu.FindAll(TreeScope.Descendants, Condition.TrueCondition),
+                180);
+        }
+        catch (Exception exception)
+        {
+            DiagnosticLog.WriteException("Expanded selector dump failed", exception);
+        }
+    }
+
     private static void OnMenuOpened(object sender, AutomationEventArgs args)
     {
         if (sender is not AutomationElement menu || !IsChatGptElement(menu))
@@ -44,6 +78,45 @@ internal static class PopupDiagnostics
         catch (Exception exception)
         {
             DiagnosticLog.WriteException("Immediate popup dump failed", exception);
+        }
+    }
+
+    private static AutomationElement? FindNearestMenu(AutomationElement element)
+    {
+        var walker = TreeWalker.ControlViewWalker;
+        AutomationElement? current = element;
+        for (var depth = 0; depth < 10 && current is not null; depth++)
+        {
+            try
+            {
+                if (current.Current.ControlType == ControlType.Menu)
+                {
+                    return current;
+                }
+
+                current = walker.GetParent(current);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        return null;
+    }
+
+    private static bool HasDirectCheckBox(AutomationElement menu)
+    {
+        try
+        {
+            var condition = new PropertyCondition(
+                AutomationElement.ControlTypeProperty,
+                ControlType.CheckBox);
+            return menu.FindFirst(TreeScope.Children, condition) is not null;
+        }
+        catch
+        {
+            return false;
         }
     }
 
@@ -102,18 +175,6 @@ internal static class PopupDiagnostics
             // Optional UIA relation.
         }
 
-        if (TryPattern(element, ValuePattern.Pattern, out var valuePattern))
-        {
-            try
-            {
-                Add(values, ((ValuePattern)valuePattern).Current.Value);
-            }
-            catch
-            {
-                // Optional value.
-            }
-        }
-
         var patterns = new List<string>();
         AddPattern(patterns, element, ExpandCollapsePattern.Pattern, "ExpandCollapse");
         AddPattern(patterns, element, InvokePattern.Pattern, "Invoke");
@@ -121,15 +182,101 @@ internal static class PopupDiagnostics
         AddPattern(patterns, element, SelectionPattern.Pattern, "Selection");
         AddPattern(patterns, element, TogglePattern.Pattern, "Toggle");
         AddPattern(patterns, element, ValuePattern.Pattern, "Value");
+        AddPattern(patterns, element, RangeValuePattern.Pattern, "RangeValue");
+        AddPattern(patterns, element, LegacyIAccessiblePattern.Pattern, "LegacyIAccessible");
+
+        var states = new List<string>();
+        AddPatternState(states, element);
 
         var bounds = current.BoundingRectangle;
         var runtime = SafeRuntimeId(element);
         return $"pid={current.ProcessId} type={current.ControlType.ProgrammaticName} " +
                $"name=\"{Sanitize(string.Join(" | ", values))}\" " +
                $"id=\"{Sanitize(current.AutomationId)}\" class=\"{Sanitize(current.ClassName)}\" " +
-               $"patterns=[{string.Join(",", patterns)}] " +
+               $"patterns=[{string.Join(",", patterns)}] states=[{string.Join(",", states)}] " +
                $"enabled={current.IsEnabled} offscreen={current.IsOffscreen} " +
                $"bounds={bounds.X:0},{bounds.Y:0},{bounds.Width:0},{bounds.Height:0} runtime={runtime}";
+    }
+
+    private static void AddPatternState(ICollection<string> states, AutomationElement element)
+    {
+        if (TryPattern(element, ExpandCollapsePattern.Pattern, out var expandValue))
+        {
+            try
+            {
+                states.Add("expand=" + ((ExpandCollapsePattern)expandValue).Current.ExpandCollapseState);
+            }
+            catch
+            {
+                // Optional state.
+            }
+        }
+
+        if (TryPattern(element, TogglePattern.Pattern, out var toggleValue))
+        {
+            try
+            {
+                states.Add("toggle=" + ((TogglePattern)toggleValue).Current.ToggleState);
+            }
+            catch
+            {
+                // Optional state.
+            }
+        }
+
+        if (TryPattern(element, SelectionItemPattern.Pattern, out var selectionValue))
+        {
+            try
+            {
+                states.Add("selected=" + ((SelectionItemPattern)selectionValue).Current.IsSelected);
+            }
+            catch
+            {
+                // Optional state.
+            }
+        }
+
+        if (TryPattern(element, ValuePattern.Pattern, out var valuePattern))
+        {
+            try
+            {
+                states.Add("value=" + Sanitize(((ValuePattern)valuePattern).Current.Value));
+            }
+            catch
+            {
+                // Optional value.
+            }
+        }
+
+        if (TryPattern(element, RangeValuePattern.Pattern, out var rangeValue))
+        {
+            try
+            {
+                var range = ((RangeValuePattern)rangeValue).Current;
+                states.Add(
+                    $"range={range.Value:0.###}/{range.Minimum:0.###}..{range.Maximum:0.###}" +
+                    $" small={range.SmallChange:0.###} large={range.LargeChange:0.###}");
+            }
+            catch
+            {
+                // Optional range value.
+            }
+        }
+
+        if (TryPattern(element, LegacyIAccessiblePattern.Pattern, out var legacyValue))
+        {
+            try
+            {
+                var legacy = ((LegacyIAccessiblePattern)legacyValue).Current;
+                states.Add(
+                    $"legacyRole={legacy.Role} legacyState={legacy.State} " +
+                    $"legacyDefault=\"{Sanitize(legacy.DefaultAction)}\"");
+            }
+            catch
+            {
+                // Optional legacy accessibility values.
+            }
+        }
     }
 
     private static void AddPattern(
