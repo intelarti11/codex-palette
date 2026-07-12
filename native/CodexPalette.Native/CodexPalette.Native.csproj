@@ -9,7 +9,7 @@
     <AssemblyName>CodexPalette</AssemblyName>
     <RootNamespace>CodexPalette.Native</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <Version>0.6.0</Version>
+    <Version>0.7.0</Version>
     <Authors>intelarti11</Authors>
     <Product>Codex Palette</Product>
     <Description>Native Windows palette for the official Codex desktop app.</Description>
