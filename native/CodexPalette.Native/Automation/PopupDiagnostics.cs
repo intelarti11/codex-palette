@@ -183,7 +183,6 @@ internal static class PopupDiagnostics
         AddPattern(patterns, element, TogglePattern.Pattern, "Toggle");
         AddPattern(patterns, element, ValuePattern.Pattern, "Value");
         AddPattern(patterns, element, RangeValuePattern.Pattern, "RangeValue");
-        AddPattern(patterns, element, LegacyIAccessiblePattern.Pattern, "LegacyIAccessible");
 
         var states = new List<string>();
         AddPatternState(states, element);
@@ -260,21 +259,6 @@ internal static class PopupDiagnostics
             catch
             {
                 // Optional range value.
-            }
-        }
-
-        if (TryPattern(element, LegacyIAccessiblePattern.Pattern, out var legacyValue))
-        {
-            try
-            {
-                var legacy = ((LegacyIAccessiblePattern)legacyValue).Current;
-                states.Add(
-                    $"legacyRole={legacy.Role} legacyState={legacy.State} " +
-                    $"legacyDefault=\"{Sanitize(legacy.DefaultAction)}\"");
-            }
-            catch
-            {
-                // Optional legacy accessibility values.
             }
         }
     }
