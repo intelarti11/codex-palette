@@ -16,6 +16,8 @@ public partial class MainWindow : Window
     private Point? _selectorAnchor;
     private Vector? _manualOffset;
     private bool _dragging;
+    private double _closedWidth = WindowPlacement.ClosedWidth;
+    private double _closedHeight = WindowPlacement.ClosedHeight;
 
     public MainWindow(MainViewModel viewModel, CodexAutomationService automation, SettingsStore settingsStore)
     {

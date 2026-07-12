@@ -16,6 +16,8 @@ public partial class MainWindow
     {
         if (state.SelectorBounds is Rect selectorBounds)
         {
+            _closedWidth = Math.Max(150, selectorBounds.Width + WindowPlacement.GripWidth);
+            _closedHeight = Math.Max(36, selectorBounds.Height);
             _selectorAnchor = WindowPlacement.GetSelectorAnchor(selectorBounds);
             if (!_dragging)
             {
@@ -47,7 +49,8 @@ public partial class MainWindow
 
     private void ApplyWindowBounds()
     {
-        var bounds = WindowPlacement.GetWindowBounds(_viewModel.IsOpen, _anchor);
+        var bounds = WindowPlacement.GetWindowBounds(
+            _viewModel.IsOpen, _anchor, _closedWidth, _closedHeight);
         Left = bounds.Left;
         Top = bounds.Top;
         Width = bounds.Width;

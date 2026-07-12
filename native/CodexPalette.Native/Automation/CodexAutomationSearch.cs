@@ -5,6 +5,38 @@ namespace CodexPalette.Native.Automation;
 
 public sealed partial class CodexAutomationService
 {
+    private AutomationElement FindSelector(
+        int processId,
+        int timeoutMilliseconds,
+        CancellationToken cancellationToken)
+    {
+        var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMilliseconds);
+        while (DateTime.UtcNow < deadline)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var cached = GetCachedDiscovery();
+            var candidates = GetElements(processId, ControlType.Button)
+                .Where(TestVisible)
+                .Where(IsPopupTrigger)
+                .Select(element => new { Element = element, Name = TextNormalizer.Normalize(SafeName(element)) })
+                .Where(candidate =>
+                    cached.Models.Any(model => candidate.Name.StartsWith(model + " ", StringComparison.Ordinal)) ||
+                    SelectorRegex().IsMatch(candidate.Name))
+                .OrderBy(candidate => cached.Models.Any(model =>
+                    candidate.Name.StartsWith(model + " ", StringComparison.Ordinal)) ? 0 : 1)
+                .ThenBy(candidate => SafeBounds(candidate.Element).Width)
+                .ToArray();
+            if (candidates.Length > 0)
+            {
+                return candidates[0].Element;
+            }
+
+            Thread.Sleep(40);
+        }
+
+        throw new AutomationUnavailableException("The native Codex selector could not be found.");
+    }
+
     private static AutomationElement FindElement(
         int processId,
         ControlType controlType,

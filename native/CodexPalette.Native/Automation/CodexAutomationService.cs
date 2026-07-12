@@ -8,10 +8,11 @@ namespace CodexPalette.Native.Automation;
 
 public sealed partial class CodexAutomationService
 {
-    private static readonly string[] ModelNames = ModelCatalog.All.Select(static model => model.Name).ToArray();
-
-    [GeneratedRegex(@"^5\.(6 (Sol|Terra|Luna)|5|4( Mini)?)\s")]
+    [GeneratedRegex(@"^\d+(?:\.\d+)+(?:\s+.+)$")]
     private static partial Regex SelectorRegex();
+
+    [GeneratedRegex(@"^\d+(?:\.\d+)+(?:\s+\S+)*$")]
+    private static partial Regex ModelLabelRegex();
 
     public Process? TryFindCodexProcess()
     {
@@ -50,6 +51,9 @@ public sealed partial class CodexAutomationService
     public Task<NativePaletteState> ReadStateAsync(CancellationToken cancellationToken = default) =>
         Task.Run(() => ReadStateCore(cancellationToken), cancellationToken);
 
+    public Task<NativePaletteState> DiscoverPaletteAsync(CancellationToken cancellationToken = default) =>
+        Task.Run(() => DiscoverPaletteCore(cancellationToken), cancellationToken);
+
     public Task<SelectionResult> ApplySelectionAsync(
         int modelIndex,
         int effortIndex,
@@ -61,7 +65,7 @@ public sealed partial class CodexAutomationService
         CancellationToken cancellationToken = default) =>
         Task.Run(() => ApplySpeedCore(speedIndex, cancellationToken), cancellationToken);
 
-    private static Rect? TryGetSelectorBoundsCore(nint mainWindowHandle)
+    private Rect? TryGetSelectorBoundsCore(nint mainWindowHandle)
     {
         if (mainWindowHandle == nint.Zero)
         {
@@ -71,22 +75,9 @@ public sealed partial class CodexAutomationService
         try
         {
             var root = AutomationElement.FromHandle(mainWindowHandle);
-            var condition = new PropertyCondition(
-                AutomationElement.ControlTypeProperty,
-                ControlType.Button);
-            var buttons = root.FindAll(TreeScope.Descendants, condition);
-
-            for (var index = 0; index < buttons.Count; index++)
-            {
-                var button = buttons[index];
-                if (!SelectorRegex().IsMatch(button.Current.Name ?? string.Empty))
-                {
-                    continue;
-                }
-
-                var bounds = button.Current.BoundingRectangle;
-                return bounds.IsEmpty ? null : bounds;
-            }
+            var selector = FindSelector(root.Current.ProcessId, 300, CancellationToken.None);
+            var bounds = selector.Current.BoundingRectangle;
+            return bounds.IsEmpty ? null : bounds;
         }
         catch
         {
@@ -102,7 +93,7 @@ public sealed partial class CodexAutomationService
         using var process = TryFindCodexProcess() ??
             throw new AutomationUnavailableException("The official Codex window could not be found.");
 
-        if (!TryReadCurrentSelection(process.Id, out var model, out var effort))
+        if (!TryReadCurrentSelection(process.Id, out var model, out var effort, out var selectorText))
         {
             throw new AutomationUnavailableException("The current Codex model and effort could not be read.");
         }
@@ -110,20 +101,24 @@ public sealed partial class CodexAutomationService
         // This method never expands or invokes a control. It only inspects the existing tree.
         LearnFromPassiveTree(process.Id, effort);
         var cached = GetCachedDiscovery();
-        var modelIndex = Array.FindIndex(ModelNames, value => value == model);
-        var effortIndex = cached.Efforts.Count is 4 or 5
+        var modelIndex = cached.Models.ToList().FindIndex(value => value == model);
+        var effortIndex = cached.Efforts.Count > 0
             ? FindLabelIndex(cached.Efforts, effort)
             : -1;
         var speedIndex = FindPassiveSpeedIndex(process.Id, cached.Speeds);
 
         return new NativePaletteState(
+            cached.Models,
             cached.Efforts,
+            cached.SupportedEfforts,
             cached.SpeedLabel,
             cached.Speeds,
-            Math.Max(modelIndex, 0),
+            modelIndex,
             effortIndex,
             speedIndex,
-            effort);
+            model,
+            effort,
+            selectorText);
     }
 
     private static int FindPassiveSpeedIndex(int processId, IReadOnlyList<string> labels)
@@ -156,12 +151,15 @@ public sealed partial class CodexAutomationService
         int effortIndex,
         CancellationToken cancellationToken)
     {
-        if (modelIndex < 0 || modelIndex >= ModelNames.Length || effortIndex < 0 || effortIndex > 4)
+        var cached = GetCachedDiscovery();
+        if (modelIndex < 0 || modelIndex >= cached.Models.Count ||
+            effortIndex < 0 || effortIndex >= cached.Efforts.Count)
         {
             throw new ArgumentOutOfRangeException(nameof(modelIndex), "Invalid selection index.");
         }
 
-        if (!ModelCatalog.Supports(modelIndex, effortIndex))
+        if (modelIndex >= cached.SupportedEfforts.Count ||
+            !cached.SupportedEfforts[modelIndex].Contains(effortIndex))
         {
             throw new InvalidOperationException("This reasoning level is unavailable for the selected model.");
         }
@@ -169,18 +167,14 @@ public sealed partial class CodexAutomationService
         using var process = TryFindCodexProcess() ??
             throw new AutomationUnavailableException("The official Codex window could not be found.");
 
-        var modelName = ModelNames[modelIndex];
+        var modelName = cached.Models[modelIndex];
+        var effortName = cached.Efforts[effortIndex];
         AutomationContext? context = null;
         try
         {
             context = GetContext(process.Id, cancellationToken);
             var modelOptions = GetMenuOptions(
-                process.Id,
-                context.ModelMenu,
-                minimum: 2,
-                maximum: 10,
-                effort: false,
-                cancellationToken);
+                process.Id, context.ModelMenu, 1, 20, false, cancellationToken);
             var targetIndex = FindExactLabelIndex(modelOptions.Labels, modelName);
             if (targetIndex < 0)
             {
@@ -208,20 +202,15 @@ public sealed partial class CodexAutomationService
         {
             context = GetContext(process.Id, cancellationToken);
             var effortOptions = GetMenuOptions(
-                process.Id,
-                context.EffortMenu,
-                minimum: 4,
-                maximum: 5,
-                effort: true,
-                cancellationToken);
-            UpdateCachedEfforts(effortOptions.Labels);
-            if (effortIndex >= effortOptions.Items.Count)
+                process.Id, context.EffortMenu, 1, 10, true, cancellationToken);
+            var targetIndex = FindExactLabelIndex(effortOptions.Labels, effortName);
+            if (targetIndex < 0)
             {
                 throw new InvalidOperationException("The requested reasoning level is not exposed by Codex.");
             }
 
-            effort = effortOptions.Labels[effortIndex];
-            SelectSilent(effortOptions.Items[effortIndex], cancellationToken);
+            effort = effortOptions.Labels[targetIndex];
+            SelectSilent(effortOptions.Items[targetIndex], cancellationToken);
         }
         finally
         {

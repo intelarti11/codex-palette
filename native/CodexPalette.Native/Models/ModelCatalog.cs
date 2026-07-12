@@ -1,25 +1,22 @@
 namespace CodexPalette.Native.Models;
 
-public sealed record ModelDefinition(
-    string Name,
-    string Glyph,
-    string Accent,
-    IReadOnlySet<int> SupportedEffortIndices);
+public sealed record ModelDefinition(string Name, string Glyph, string Accent);
 
 public static class ModelCatalog
 {
-    public static IReadOnlyList<ModelDefinition> All { get; } =
+    private static readonly (string Glyph, string Accent)[] Visuals =
     [
-        new("5.6 Sol", "☀", "#E6A63A", new HashSet<int> { 0, 1, 2, 3, 4 }),
-        new("5.6 Terra", "◆", "#5C9C68", new HashSet<int> { 0, 1, 2, 3, 4 }),
-        new("5.6 Luna", "☾", "#7772B8", new HashSet<int> { 0, 1, 2, 3 }),
-        new("5.5", "◉", "#4A84AE", new HashSet<int> { 0, 1, 2, 3 }),
-        new("5.4", "◇", "#9B6FAE", new HashSet<int> { 0, 1, 2, 3 }),
-        new("5.4 Mini", "·", "#777777", new HashSet<int> { 0, 1, 2, 3 }),
+        ("☀", "#E6A63A"),
+        ("◆", "#5C9C68"),
+        ("☾", "#7772B8"),
+        ("◉", "#4A84AE"),
+        ("◇", "#9B6FAE"),
+        ("·", "#777777"),
     ];
 
-    public static bool Supports(int modelIndex, int effortIndex) =>
-        modelIndex >= 0 &&
-        modelIndex < All.Count &&
-        All[modelIndex].SupportedEffortIndices.Contains(effortIndex);
+    public static ModelDefinition Create(string name, int index)
+    {
+        var visual = Visuals[Math.Abs(index) % Visuals.Length];
+        return new ModelDefinition(name, visual.Glyph, visual.Accent);
+    }
 }

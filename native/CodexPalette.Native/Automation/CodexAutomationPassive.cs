@@ -57,10 +57,39 @@ public sealed partial class CodexAutomationService : IDisposable
         lock (_cacheGate)
         {
             return new DiscoveryCacheData(
+                _cache.Models.ToArray(),
                 _cache.Efforts.ToArray(),
+                _cache.SupportedEfforts.Select(static values => (IReadOnlyList<int>)values.ToArray()).ToArray(),
                 _cache.SpeedLabel,
                 _cache.Speeds.ToArray());
         }
+    }
+
+    private void UpdateCachedMatrix(
+        IReadOnlyList<string> models,
+        IReadOnlyList<string> efforts,
+        IReadOnlyList<IReadOnlyList<int>> supportedEfforts)
+    {
+        var normalizedModels = models.Select(TextNormalizer.Normalize)
+            .Where(static value => !string.IsNullOrWhiteSpace(value))
+            .Distinct(StringComparer.Ordinal).Take(20).ToArray();
+        var normalizedEfforts = efforts.Select(static value => TextNormalizer.Normalize(value, effort: true))
+            .Where(static value => !string.IsNullOrWhiteSpace(value))
+            .Distinct(StringComparer.Ordinal).Take(10).ToArray();
+        if (normalizedModels.Length == 0 || normalizedEfforts.Length == 0 ||
+            supportedEfforts.Count != normalizedModels.Length)
+        {
+            return;
+        }
+
+        UpdateCache(current => current with
+        {
+            Models = normalizedModels,
+            Efforts = normalizedEfforts,
+            SupportedEfforts = supportedEfforts
+                .Select(static values => (IReadOnlyList<int>)values.Distinct().Order().ToArray())
+                .ToArray(),
+        });
     }
 
     private void UpdateCachedEfforts(IReadOnlyList<string> efforts)
@@ -107,7 +136,9 @@ public sealed partial class CodexAutomationService : IDisposable
             next = update(_cache);
             if (next == _cache ||
                 (next.SpeedLabel == _cache.SpeedLabel &&
+                 next.Models.SequenceEqual(_cache.Models, StringComparer.Ordinal) &&
                  next.Efforts.SequenceEqual(_cache.Efforts, StringComparer.Ordinal) &&
+                 MatrixEquals(next.SupportedEfforts, _cache.SupportedEfforts) &&
                  next.Speeds.SequenceEqual(_cache.Speeds, StringComparer.Ordinal)))
             {
                 return;
@@ -119,6 +150,11 @@ public sealed partial class CodexAutomationService : IDisposable
         _cacheStore.Save(next);
         PassiveStateChanged?.Invoke(this, EventArgs.Empty);
     }
+
+    private static bool MatrixEquals(
+        IReadOnlyList<IReadOnlyList<int>> left,
+        IReadOnlyList<IReadOnlyList<int>> right) =>
+        left.Count == right.Count && left.Zip(right).All(static pair => pair.First.SequenceEqual(pair.Second));
 
     private void MenuOpened(object sender, AutomationEventArgs args)
     {
@@ -163,7 +199,7 @@ public sealed partial class CodexAutomationService : IDisposable
             if (labels.Length is 4 or 5)
             {
                 using var process = TryFindCodexProcess();
-                if (process?.Id == processId && TryReadCurrentSelection(processId, out _, out var effort))
+                if (process?.Id == processId && TryReadCurrentSelection(processId, out _, out var effort, out _))
                 {
                     var normalizedEffort = TextNormalizer.Normalize(effort, effort: true);
                     if (labels.Any(label =>
@@ -231,29 +267,30 @@ public sealed partial class CodexAutomationService : IDisposable
         }
     }
 
-    private static bool TryReadCurrentSelection(int processId, out string model, out string effort)
+    private bool TryReadCurrentSelection(
+        int processId,
+        out string model,
+        out string effort,
+        out string selectorText)
     {
         model = string.Empty;
         effort = string.Empty;
+        selectorText = string.Empty;
         try
         {
-            var selector = FindElement(
-                processId,
-                ControlType.Button,
-                SelectorRegex().ToString(),
-                exact: false,
-                timeoutMilliseconds: 400,
-                CancellationToken.None);
-            var selectorName = TextNormalizer.Normalize(selector.Current.Name);
-            model = ModelNames.FirstOrDefault(name =>
-                selectorName.StartsWith(name + " ", StringComparison.Ordinal)) ?? string.Empty;
-            if (string.IsNullOrWhiteSpace(model))
+            var selector = FindSelector(processId, 400, CancellationToken.None);
+            selectorText = TextNormalizer.Normalize(selector.Current.Name);
+            var cached = GetCachedDiscovery();
+            model = cached.Models.OrderByDescending(static value => value.Length).FirstOrDefault(name =>
+                selectorText.StartsWith(name + " ", StringComparison.Ordinal)) ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(model) && cached.Models.Count == 0)
             {
-                return false;
+                model = selectorText;
+                return true;
             }
 
-            effort = selectorName[model.Length..].Trim();
-            return !string.IsNullOrWhiteSpace(effort);
+            effort = selectorText[model.Length..].Trim();
+            return !string.IsNullOrWhiteSpace(model);
         }
         catch
         {

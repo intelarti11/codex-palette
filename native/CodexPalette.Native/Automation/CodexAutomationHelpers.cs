@@ -111,7 +111,9 @@ public sealed partial class CodexAutomationService
         IReadOnlyList<AutomationElement> Submenus,
         AutomationElement ModelMenu,
         AutomationElement EffortMenu,
-        AutomationElement? SpeedMenu);
+        AutomationElement? SpeedMenu,
+        MenuOptions ModelOptions,
+        MenuOptions EffortOptions);
 
     private sealed record MenuEntry(AutomationElement Item, double X, double Y, string Label);
     private sealed record MenuOptions(IReadOnlyList<AutomationElement> Items, IReadOnlyList<string> Labels);

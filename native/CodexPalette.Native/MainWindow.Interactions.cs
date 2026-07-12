@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Threading;
 using CodexPalette.Native.Models;
 using CodexPalette.Native.ViewModels;
 
@@ -13,7 +14,15 @@ public partial class MainWindow
         SetOpen(!_viewModel.IsOpen);
         if (_viewModel.IsOpen)
         {
-            await _viewModel.RefreshAsync(showErrors: true);
+            await Dispatcher.Yield(DispatcherPriority.Render);
+            if (_viewModel.IsMatrixEmpty)
+            {
+                await _viewModel.DiscoverAsync();
+            }
+            else
+            {
+                await _viewModel.RefreshAsync(showErrors: true);
+            }
         }
     }
 
@@ -57,7 +66,8 @@ public partial class MainWindow
         try
         {
             DragMove();
-            _anchor = WindowPlacement.GetAnchorFromWindow(_viewModel.IsOpen, Left, Top);
+            _anchor = WindowPlacement.GetAnchorFromWindow(
+                _viewModel.IsOpen, Left, Top, _closedWidth, _closedHeight);
             if (_selectorAnchor is Point selectorAnchor)
             {
                 _manualOffset = _anchor - selectorAnchor;

@@ -16,17 +16,18 @@ public sealed class MainViewModel : ObservableObject
     private int _selectedModelIndex;
     private int _selectedEffortIndex = -1;
     private int _selectedSpeedIndex = -1;
-    private string _selectedEffortName = "…";
+    private string _selectedModelName = string.Empty;
+    private string _selectedEffortName = string.Empty;
+    private string _selectorText = string.Empty;
     private string _speedLabel = string.Empty;
+    private IReadOnlyList<IReadOnlyList<int>> _supportedEfforts = Array.Empty<IReadOnlyList<int>>();
 
     public MainViewModel(CodexAutomationService automation)
     {
         _automation = automation;
-        Models = new ObservableCollection<ModelHeaderViewModel>(
-            ModelCatalog.All.Select(static model => new ModelHeaderViewModel(model)));
+        Models = [];
         EffortRows = [];
         Speeds = [];
-        RebuildEfforts(Enumerable.Repeat("…", 5).ToArray());
     }
 
     public ObservableCollection<ModelHeaderViewModel> Models { get; }
@@ -59,11 +60,17 @@ public sealed class MainViewModel : ObservableObject
 
     public bool HasNotice => !string.IsNullOrWhiteSpace(Notice);
     public bool HasSpeeds => Speeds.Count == 2;
+    public bool IsMatrixEmpty => Models.Count == 0 || EffortRows.Count == 0;
+    public int ModelColumnCount => Math.Max(Models.Count, 1);
 
-    public string SelectedModelName =>
-        ModelCatalog.All[Math.Clamp(_selectedModelIndex, 0, ModelCatalog.All.Count - 1)].Name;
+    public string SelectedModelName => !string.IsNullOrWhiteSpace(_selectedModelName)
+        ? _selectedModelName
+        : _selectorText;
 
     public string SelectedEffortName => _selectedEffortName;
+    public Brush SelectedAccentBrush => Models.Count > 0 && _selectedModelIndex >= 0 && _selectedModelIndex < Models.Count
+        ? Models[_selectedModelIndex].AccentBrush
+        : BrushFactory.FromHex("#4A84AE");
 
     public string SpeedLabel
     {
@@ -100,6 +107,26 @@ public sealed class MainViewModel : ObservableObject
         }
     }
 
+    public async Task DiscoverAsync()
+    {
+        await _operationLock.WaitAsync();
+        IsBusy = true;
+        Notice = null;
+        try
+        {
+            ApplyNativeState(await _automation.DiscoverPaletteAsync());
+        }
+        catch (Exception exception)
+        {
+            Notice = exception.Message;
+        }
+        finally
+        {
+            IsBusy = false;
+            _operationLock.Release();
+        }
+    }
+
     public async Task<bool> ApplySelectionAsync(PaletteCellViewModel cell)
     {
         if (IsBusy || !cell.IsSupported)
@@ -114,6 +141,7 @@ public sealed class MainViewModel : ObservableObject
         {
             var result = await _automation.ApplySelectionAsync(cell.ModelIndex, cell.EffortIndex);
             _selectedModelIndex = cell.ModelIndex;
+            _selectedModelName = cell.ModelName;
             _selectedEffortIndex = cell.EffortIndex;
             _selectedEffortName = cell.EffortIndex >= 0 && cell.EffortIndex < EffortRows.Count
                 ? EffortRows[cell.EffortIndex].Label
@@ -121,6 +149,7 @@ public sealed class MainViewModel : ObservableObject
             UpdateCellSelection();
             OnPropertyChanged(nameof(SelectedModelName));
             OnPropertyChanged(nameof(SelectedEffortName));
+            OnPropertyChanged(nameof(SelectedAccentBrush));
             Notice = result.DisplayName;
             return true;
         }
@@ -170,8 +199,22 @@ public sealed class MainViewModel : ObservableObject
     {
         _selectedModelIndex = state.ModelIndex;
         _selectedSpeedIndex = state.SpeedIndex;
+        _selectedModelName = state.CurrentModel;
+        _selectorText = state.SelectorText;
+        _supportedEfforts = state.SupportedEfforts;
 
-        if (state.Efforts.Count is 4 or 5)
+        if (!Models.Select(static model => model.Name).SequenceEqual(state.Models, StringComparer.Ordinal))
+        {
+            Models.Clear();
+            for (var index = 0; index < state.Models.Count; index++)
+            {
+                Models.Add(new ModelHeaderViewModel(ModelCatalog.Create(state.Models[index], index)));
+            }
+            OnPropertyChanged(nameof(ModelColumnCount));
+            OnPropertyChanged(nameof(IsMatrixEmpty));
+        }
+
+        if (state.Efforts.Count > 0 && Models.Count > 0)
         {
             _selectedEffortIndex = state.EffortIndex;
             RebuildEfforts(state.Efforts);
@@ -197,6 +240,8 @@ public sealed class MainViewModel : ObservableObject
         RebuildSpeeds(state.SpeedLabel, state.Speeds);
         OnPropertyChanged(nameof(SelectedModelName));
         OnPropertyChanged(nameof(SelectedEffortName));
+        OnPropertyChanged(nameof(SelectedAccentBrush));
+        OnPropertyChanged(nameof(IsMatrixEmpty));
     }
 
     private void RebuildEfforts(IReadOnlyList<string> effortLabels)
@@ -205,15 +250,15 @@ public sealed class MainViewModel : ObservableObject
         for (var effortIndex = 0; effortIndex < effortLabels.Count; effortIndex++)
         {
             var cells = new ObservableCollection<PaletteCellViewModel>();
-            for (var modelIndex = 0; modelIndex < ModelCatalog.All.Count; modelIndex++)
+            for (var modelIndex = 0; modelIndex < Models.Count; modelIndex++)
             {
-                var definition = ModelCatalog.All[modelIndex];
+                var definition = Models[modelIndex];
                 cells.Add(new PaletteCellViewModel(
                     modelIndex,
                     effortIndex,
                     definition.Name,
-                    BrushFactory.FromHex(definition.Accent),
-                    ModelCatalog.Supports(modelIndex, effortIndex),
+                    definition.AccentBrush,
+                    modelIndex < _supportedEfforts.Count && _supportedEfforts[modelIndex].Contains(effortIndex),
                     modelIndex == _selectedModelIndex && effortIndex == _selectedEffortIndex));
             }
 

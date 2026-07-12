@@ -5,24 +5,10 @@ namespace CodexPalette.Native.Automation;
 
 public sealed partial class CodexAutomationService
 {
-    private static AutomationContext GetContext(int processId, CancellationToken cancellationToken)
+    private AutomationContext GetContext(int processId, CancellationToken cancellationToken)
     {
-        var selector = FindElement(
-            processId,
-            ControlType.Button,
-            SelectorRegex().ToString(),
-            exact: false,
-            timeoutMilliseconds: 2500,
-            cancellationToken);
+        var selector = FindSelector(processId, 2500, cancellationToken);
         var selectorName = TextNormalizer.Normalize(selector.Current.Name);
-        var model = ModelNames.FirstOrDefault(name =>
-            selectorName.StartsWith(name + " ", StringComparison.Ordinal));
-        if (model is null)
-        {
-            throw new AutomationUnavailableException("The current model could not be identified.");
-        }
-
-        var effort = selectorName[model.Length..].Trim();
         var visibleBefore = GetVisibleRuntimeKeys(processId);
         OpenSilent(selector, cancellationToken);
 
@@ -56,18 +42,60 @@ public sealed partial class CodexAutomationService
             Thread.Sleep(30);
         }
 
-        var modelMenu = submenus.FirstOrDefault(element => ElementContains(element, model));
-        var effortMenu = submenus.FirstOrDefault(element =>
-            !SameElement(element, modelMenu) && ElementContains(element, effort));
-        var speedMenu = submenus.FirstOrDefault(element =>
-            !SameElement(element, modelMenu) && !SameElement(element, effortMenu));
+        AutomationElement? modelMenu = null;
+        AutomationElement? effortMenu = null;
+        AutomationElement? speedMenu = null;
+        MenuOptions? modelOptions = null;
+        MenuOptions? effortOptions = null;
 
-        if (modelMenu is null || effortMenu is null)
+        foreach (var submenu in submenus)
+        {
+            try
+            {
+                var options = GetMenuOptions(processId, submenu, 1, 20, false, cancellationToken);
+                CloseSilent(submenu);
+                var modelLike = options.Labels.Count >= 2 &&
+                    options.Labels.Count(label => ModelLabelRegex().IsMatch(label)) >=
+                    Math.Max(2, options.Labels.Count - 1);
+                if (modelLike && modelMenu is null)
+                {
+                    modelMenu = submenu;
+                    modelOptions = options;
+                    continue;
+                }
+
+                var matchesCurrentSuffix = options.Labels.Any(label =>
+                    selectorName.EndsWith(" " + label, StringComparison.Ordinal));
+                if (matchesCurrentSuffix && options.Labels.Count >= 2 && effortMenu is null)
+                {
+                    effortMenu = submenu;
+                    effortOptions = options;
+                    continue;
+                }
+
+                if (options.Labels.Count == 2 && speedMenu is null)
+                {
+                    speedMenu = submenu;
+                }
+            }
+            catch
+            {
+                CloseSilent(submenu);
+            }
+        }
+
+        if (modelMenu is null || effortMenu is null || modelOptions is null || effortOptions is null)
         {
             CloseSilent(selector);
             throw new AutomationUnavailableException(
                 "The native model or effort selector is not exposed through ExpandCollapsePattern.");
         }
+
+        var model = modelOptions.Labels
+            .OrderByDescending(static value => value.Length)
+            .FirstOrDefault(value => selectorName.StartsWith(value + " ", StringComparison.Ordinal)) ??
+            throw new AutomationUnavailableException("The current model could not be identified from native options.");
+        var effort = selectorName[model.Length..].Trim();
 
         return new AutomationContext(
             selector,
@@ -76,7 +104,9 @@ public sealed partial class CodexAutomationService
             submenus,
             modelMenu,
             effortMenu,
-            speedMenu);
+            speedMenu,
+            modelOptions,
+            effortOptions);
     }
 
     private static MenuOptions GetMenuOptions(

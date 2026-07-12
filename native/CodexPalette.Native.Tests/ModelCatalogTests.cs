@@ -4,13 +4,13 @@ namespace CodexPalette.Native.Tests;
 
 public sealed class ModelCatalogTests
 {
-    [Theory]
-    [InlineData(0, 4, true)]
-    [InlineData(1, 4, true)]
-    [InlineData(2, 4, false)]
-    [InlineData(5, 3, true)]
-    public void Supports_MatchesCodexMatrix(int modelIndex, int effortIndex, bool expected)
+    [Fact]
+    public void Create_PreservesNativeNameAndAssignsVisual()
     {
-        Assert.Equal(expected, ModelCatalog.Supports(modelIndex, effortIndex));
+        var model = ModelCatalog.Create("Modelo localizado", 2);
+
+        Assert.Equal("Modelo localizado", model.Name);
+        Assert.False(string.IsNullOrWhiteSpace(model.Glyph));
+        Assert.StartsWith("#", model.Accent);
     }
 }

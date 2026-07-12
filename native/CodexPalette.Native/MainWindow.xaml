@@ -6,19 +6,20 @@
  ShowInTaskbar="False" ShowActivated="False" Topmost="True" Opacity="0"
  Loaded="Window_Loaded" Closed="Window_Closed" KeyDown="Window_KeyDown">
  <Grid>
-  <Border Background="#F9F8F4" BorderBrush="#26000000" BorderThickness="1" CornerRadius="13">
+  <Border Background="Transparent" BorderBrush="#33000000" BorderThickness="1" CornerRadius="12">
    <Border.Style><Style TargetType="Border"><Setter Property="Visibility" Value="Collapsed"/>
     <Style.Triggers><DataTrigger Binding="{Binding IsOpen}" Value="False"><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers>
    </Style></Border.Style>
-   <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="27"/><ColumnDefinition/></Grid.ColumnDefinitions>
-    <Border Background="#0B000000" CornerRadius="13,0,0,13" Cursor="SizeAll" MouseLeftButtonDown="DragHandle_MouseLeftButtonDown">
-     <TextBlock Text="⋮" FontSize="19" Foreground="#77766F" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+   <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="24"/><ColumnDefinition/></Grid.ColumnDefinitions>
+    <Border Background="#B02D2C29" CornerRadius="11,0,0,11" Cursor="SizeAll" MouseLeftButtonDown="DragHandle_MouseLeftButtonDown">
+     <TextBlock Text="⋮" FontSize="19" Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"/>
     </Border>
-    <Button Grid.Column="1" Background="Transparent" BorderThickness="0" Cursor="Hand" Click="Toggle_Click">
+    <Button Grid.Column="1" Background="{Binding SelectedAccentBrush}" BorderThickness="0" Cursor="Hand" Click="Toggle_Click">
+     <Button.Template><ControlTemplate TargetType="Button"><Border Background="{TemplateBinding Background}" CornerRadius="0,11,11,0"><ContentPresenter/></Border></ControlTemplate></Button.Template>
      <Grid Margin="11,0,8,0"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-      <StackPanel VerticalAlignment="Center"><TextBlock Text="{Binding SelectedModelName}" FontWeight="SemiBold" FontSize="12.5" Foreground="#24231F"/>
-       <TextBlock Text="{Binding SelectedEffortName}" FontSize="10.5" Foreground="#706F68"/></StackPanel>
-      <TextBlock Grid.Column="1" Text="⌄" FontSize="17" Foreground="#6D6B64" VerticalAlignment="Center"/>
+      <StackPanel VerticalAlignment="Center"><TextBlock Text="{Binding SelectedModelName}" FontWeight="SemiBold" FontSize="12.5" Foreground="White" TextTrimming="CharacterEllipsis"/>
+       <TextBlock Text="{Binding SelectedEffortName}" FontSize="10.5" Foreground="#EFFFFFFF" TextTrimming="CharacterEllipsis"/></StackPanel>
+      <TextBlock Grid.Column="1" Text="⌄" FontSize="17" Foreground="White" VerticalAlignment="Center"/>
      </Grid>
     </Button>
    </Grid>
@@ -41,13 +42,13 @@
     </Grid>
     <StackPanel Grid.Row="1">
      <Grid Margin="0,1,0,3"><Grid.ColumnDefinitions><ColumnDefinition Width="98"/><ColumnDefinition/></Grid.ColumnDefinitions>
-      <ItemsControl Grid.Column="1" ItemsSource="{Binding Models}"><ItemsControl.ItemsPanel><ItemsPanelTemplate><UniformGrid Columns="6"/></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+      <ItemsControl Grid.Column="1" ItemsSource="{Binding Models}"><ItemsControl.ItemsPanel><ItemsPanelTemplate><UniformGrid Columns="{Binding DataContext.ModelColumnCount, RelativeSource={RelativeSource AncestorType=ItemsControl}}"/></ItemsPanelTemplate></ItemsControl.ItemsPanel>
        <ItemsControl.ItemTemplate><DataTemplate><StackPanel HorizontalAlignment="Center" Margin="3,0"><TextBlock Text="{Binding Glyph}" Foreground="{Binding AccentBrush}" FontSize="16" FontWeight="SemiBold" HorizontalAlignment="Center"/><TextBlock Text="{Binding Name}" Foreground="#4C4B45" FontSize="10.5" FontWeight="SemiBold" HorizontalAlignment="Center"/></StackPanel></DataTemplate></ItemsControl.ItemTemplate>
       </ItemsControl>
      </Grid>
      <ItemsControl ItemsSource="{Binding EffortRows}"><ItemsControl.ItemTemplate><DataTemplate><Grid Height="43"><Grid.ColumnDefinitions><ColumnDefinition Width="98"/><ColumnDefinition/></Grid.ColumnDefinitions>
       <TextBlock Text="{Binding Label}" Foreground="#626159" FontSize="11.5" FontWeight="SemiBold" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
-      <ItemsControl Grid.Column="1" ItemsSource="{Binding Cells}"><ItemsControl.ItemsPanel><ItemsPanelTemplate><UniformGrid Columns="6"/></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+      <ItemsControl Grid.Column="1" ItemsSource="{Binding Cells}"><ItemsControl.ItemsPanel><ItemsPanelTemplate><UniformGrid Columns="{Binding DataContext.ModelColumnCount, RelativeSource={RelativeSource AncestorType=Window}}"/></ItemsPanelTemplate></ItemsControl.ItemsPanel>
        <ItemsControl.ItemTemplate><DataTemplate><Button Style="{StaticResource CellButton}" IsEnabled="{Binding IsSupported}" Click="PaletteCell_Click" ToolTip="{Binding ModelName}"/></DataTemplate></ItemsControl.ItemTemplate>
       </ItemsControl></Grid></DataTemplate></ItemsControl.ItemTemplate></ItemsControl>
     </StackPanel>

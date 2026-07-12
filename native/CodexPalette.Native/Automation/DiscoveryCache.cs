@@ -4,11 +4,15 @@ using System.Text.Json;
 namespace CodexPalette.Native.Automation;
 
 internal sealed record DiscoveryCacheData(
+    IReadOnlyList<string> Models,
     IReadOnlyList<string> Efforts,
+    IReadOnlyList<IReadOnlyList<int>> SupportedEfforts,
     string SpeedLabel,
     IReadOnlyList<string> Speeds)
 {
-    public static DiscoveryCacheData Empty { get; } = new(Array.Empty<string>(), string.Empty, Array.Empty<string>());
+    public static DiscoveryCacheData Empty { get; } = new(
+        Array.Empty<string>(), Array.Empty<string>(), Array.Empty<IReadOnlyList<int>>(),
+        string.Empty, Array.Empty<string>());
 }
 
 internal sealed class DiscoveryCache
@@ -59,11 +63,25 @@ internal sealed class DiscoveryCache
 
     private static DiscoveryCacheData Sanitize(DiscoveryCacheData value) =>
         new(
+            value.Models
+                .Select(TextNormalizer.Normalize)
+                .Where(static label => !string.IsNullOrWhiteSpace(label))
+                .Distinct(StringComparer.Ordinal)
+                .Take(20)
+                .ToArray(),
             value.Efforts
                 .Select(static label => TextNormalizer.Normalize(label, effort: true))
                 .Where(static label => !string.IsNullOrWhiteSpace(label))
                 .Distinct(StringComparer.Ordinal)
-                .Take(5)
+                .Take(10)
+                .ToArray(),
+            value.SupportedEfforts
+                .Take(20)
+                .Select(static indices => (IReadOnlyList<int>)indices
+                    .Where(static index => index >= 0 && index < 10)
+                    .Distinct()
+                    .Order()
+                    .ToArray())
                 .ToArray(),
             TextNormalizer.Normalize(value.SpeedLabel),
             value.Speeds
