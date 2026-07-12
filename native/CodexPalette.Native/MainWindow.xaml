@@ -35,6 +35,11 @@
      </Border>
      <TextBlock Grid.Column="1" Text="Codex Palette" FontSize="12" FontWeight="SemiBold" Foreground="#44423D" VerticalAlignment="Center" Margin="10,0"/>
      <StackPanel Grid.Column="2" Orientation="Horizontal">
+      <Button Content="⛓" ToolTip="{Binding ThreadLinkStatus}" Click="LinkThread_Click">
+       <Button.Style><Style TargetType="Button" BasedOn="{StaticResource IconButton}">
+        <Style.Triggers><DataTrigger Binding="{Binding IsThreadLinked}" Value="True"><Setter Property="Background" Value="#2244A06D"/><Setter Property="Foreground" Value="#2F7D59"/></DataTrigger></Style.Triggers>
+       </Style></Button.Style>
+      </Button>
       <Button Style="{StaticResource IconButton}" Content="↻" ToolTip="Reset position" Click="ResetPosition_Click"/>
       <Button Style="{StaticResource IconButton}" Content="−" ToolTip="Collapse" Click="Collapse_Click"/>
       <Button Style="{StaticResource IconButton}" Content="×" ToolTip="Quit" Click="Quit_Click"/>
@@ -59,6 +64,7 @@
        <ItemsControl.ItemTemplate><DataTemplate><Button Style="{StaticResource SpeedButton}" Content="{Binding Label}" Click="SpeedOption_Click"/></DataTemplate></ItemsControl.ItemTemplate>
       </ItemsControl></Border>
      </StackPanel>
+     <TextBlock Grid.Column="1" Text="{Binding ThreadLinkStatus}" Foreground="#2F7D59" FontSize="10.5" FontWeight="SemiBold" VerticalAlignment="Center" HorizontalAlignment="Center" TextTrimming="CharacterEllipsis" MaxWidth="190" Visibility="{Binding IsThreadLinked, Converter={StaticResource BooleanToVisibilityConverter}}"/>
      <TextBlock Grid.Column="2" Text="{Binding Notice}" Foreground="#77766E" FontSize="10.5" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" MaxWidth="250" Visibility="{Binding HasNotice, Converter={StaticResource BooleanToVisibilityConverter}}"/>
     </Grid>
    </Grid>
