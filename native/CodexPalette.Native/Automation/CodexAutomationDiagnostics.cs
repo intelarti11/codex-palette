@@ -47,7 +47,7 @@ public sealed partial class CodexAutomationService
         try
         {
             Automation.AddAutomationEventHandler(
-                AutomationElement.WindowOpenedEvent,
+                WindowPattern.WindowOpenedEvent,
                 AutomationElement.RootElement,
                 TreeScope.Subtree,
                 _diagnosticAutomationEventHandler);
@@ -90,7 +90,7 @@ public sealed partial class CodexAutomationService
                     AutomationElement.RootElement,
                     _diagnosticAutomationEventHandler);
                 Automation.RemoveAutomationEventHandler(
-                    AutomationElement.WindowOpenedEvent,
+                    WindowPattern.WindowOpenedEvent,
                     AutomationElement.RootElement,
                     _diagnosticAutomationEventHandler);
             }
@@ -412,7 +412,7 @@ public sealed partial class CodexAutomationService
         IEnumerable<string> values = controlType is "Button" or "MenuItem" or "ListItem" or
             "RadioButton" or "CheckBox" or "ComboBox"
             ? GetElementStrings(element)
-            : [SafeName(element)];
+            : new[] { SafeName(element) };
 
         return SanitizeDiagnosticValue(string.Join(" | ", values.Take(3)));
     }
