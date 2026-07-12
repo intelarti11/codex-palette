@@ -97,23 +97,39 @@ public sealed partial class CodexAutomationService
             return;
         }
 
-        foreach (var submenu in context.Submenus.Reverse())
-        {
-            CloseSilent(submenu);
-        }
-        CloseSilent(context.Selector);
+        CloseSelectorLayout(
+            context.Selector,
+            context.AdvancedToggle,
+            context.RestoreNormalLayout,
+            context.ExpandableControls);
+    }
+
+    private enum SelectorLayout
+    {
+        Normal,
+        Advanced,
     }
 
     private sealed record AutomationContext(
         AutomationElement Selector,
+        AutomationElement Popup,
+        SelectorLayout InitialLayout,
+        AutomationElement? AdvancedToggle,
+        bool RestoreNormalLayout,
         string Model,
         string Effort,
-        IReadOnlyList<AutomationElement> Submenus,
+        IReadOnlyList<AutomationElement> ExpandableControls,
         AutomationElement ModelMenu,
         AutomationElement EffortMenu,
         AutomationElement? SpeedMenu,
+        AutomationElement? SpeedToggle,
         MenuOptions ModelOptions,
         MenuOptions EffortOptions);
+
+    private sealed record OptionSource(
+        AutomationElement Control,
+        MenuOptions Snapshot,
+        bool RequiresOpen);
 
     private sealed record MenuEntry(AutomationElement Item, double X, double Y, string Label);
     private sealed record MenuOptions(IReadOnlyList<AutomationElement> Items, IReadOnlyList<string> Labels);
@@ -124,5 +140,6 @@ public sealed partial class CodexAutomationService
         IReadOnlyList<AutomationElement> Items,
         IReadOnlyList<string> Labels,
         string Label,
-        int SelectedIndex);
+        int SelectedIndex,
+        bool IsToggle);
 }
