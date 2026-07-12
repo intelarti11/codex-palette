@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.RegularExpressions;
 using CodexPalette.Native.Models;
 
 namespace CodexPalette.Native.Automation;
@@ -33,7 +34,7 @@ public sealed partial class CodexAutomationService
         }
 
         var models = catalog.Models
-            .Select(static model => model.DisplayName)
+            .Select(static model => ToDesktopPickerModelName(model.DisplayName))
             .ToArray();
         var efforts = effortOptions
             .Select(static effort => effort.DisplayName)
@@ -51,6 +52,19 @@ public sealed partial class CodexAutomationService
         UpdateSpeedFromCatalog(catalog);
 
         return ReadStateCore(cancellationToken);
+    }
+
+    private static string ToDesktopPickerModelName(string displayName)
+    {
+        var value = TextNormalizer.Normalize(displayName);
+        if (value.StartsWith("GPT-", StringComparison.OrdinalIgnoreCase))
+        {
+            value = value[4..];
+        }
+
+        value = Regex.Replace(value, @"(?<=\d)-(?=[A-Za-z])", " ", RegexOptions.CultureInvariant);
+        value = value.Replace('-', ' ');
+        return TextNormalizer.Normalize(value);
     }
 
     private void UpdateSpeedFromCatalog(CodexCatalog catalog)
