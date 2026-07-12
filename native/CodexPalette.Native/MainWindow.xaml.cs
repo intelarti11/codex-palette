@@ -2,6 +2,7 @@ using System.Windows;
 using System.Windows.Input;
 using CodexPalette.Native.Automation;
 using CodexPalette.Native.Infrastructure;
+using CodexPalette.Native.Models;
 using CodexPalette.Native.ViewModels;
 
 namespace CodexPalette.Native;

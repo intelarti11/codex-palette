@@ -281,8 +281,9 @@ public sealed partial class CodexAutomationService : IDisposable
             var selector = FindSelector(processId, 400, CancellationToken.None);
             selectorText = TextNormalizer.Normalize(selector.Current.Name);
             var cached = GetCachedDiscovery();
+            var currentSelectorText = selectorText;
             model = cached.Models.OrderByDescending(static value => value.Length).FirstOrDefault(name =>
-                selectorText.StartsWith(name + " ", StringComparison.Ordinal)) ?? string.Empty;
+                currentSelectorText.StartsWith(name + " ", StringComparison.Ordinal)) ?? string.Empty;
             if (string.IsNullOrWhiteSpace(model) && cached.Models.Count == 0)
             {
                 model = selectorText;
