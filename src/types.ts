@@ -1,5 +1,7 @@
 export interface NativeLabels {
+  models: string[]
   efforts: string[]
+  supportedEfforts: number[][]
   speedLabel: string
   speeds: string[]
   speedIndex: number

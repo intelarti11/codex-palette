@@ -305,10 +305,34 @@ if (-not $codex) { throw 'The official Codex window could not be found.' }
 
 if ($Mode -eq 'labels') {
   $context = Get-Context $codex.Id
+  $originalModel = $context.model
+  $modelOptions = Get-MenuOptions $codex.Id $context.modelMenu 1 20
+  $models = @($modelOptions.labels)
   $effortOptions = Get-MenuOptions $codex.Id $context.effortMenu 4 5 -Effort
   $efforts = @($effortOptions.labels)
   Close-Silent $context.selector
-  if ($efforts.Count -eq 4) { $efforts += 'Ultra' }
+  $supportedEfforts = @()
+  foreach ($model in $models) {
+    $indices = @()
+    try {
+      $context = Get-Context $codex.Id
+      Open-Silent $context.modelMenu
+      Select-Silent (Find-Element $codex.Id ([System.Windows.Automation.ControlType]::MenuItem) $model -Exact)
+      $context = Get-Context $codex.Id
+      $options = Get-MenuOptions $codex.Id $context.effortMenu 1 10 -Effort
+      for ($i = 0; $i -lt $options.labels.Count; $i++) {
+        $globalIndex = [Array]::IndexOf($efforts, $options.labels[$i])
+        if ($globalIndex -ge 0) { $indices += $globalIndex }
+      }
+      Close-Silent $context.selector
+    } catch { try { Close-Silent $context.selector } catch {} }
+    $supportedEfforts += ,@($indices)
+  }
+  try {
+    $context = Get-Context $codex.Id
+    Open-Silent $context.modelMenu
+    Select-Silent (Find-Element $codex.Id ([System.Windows.Automation.ControlType]::MenuItem) $originalModel -Exact)
+  } catch {}
 
   $speedLabel = ''; $speeds = @(); $selected = -1
   try {
@@ -318,7 +342,7 @@ if ($Mode -eq 'labels') {
     Close-Silent $speed.owner
   } catch { try { Close-Silent $context.selector } catch {} }
 
-  @{ ok = $true; efforts = $efforts; speedLabel = $speedLabel; speeds = $speeds; speedIndex = $selected } |
+  @{ ok = $true; models = $models; efforts = $efforts; supportedEfforts = $supportedEfforts; speedLabel = $speedLabel; speeds = $speeds; speedIndex = $selected } |
     ConvertTo-Json -Compress
   exit 0
 }
@@ -346,20 +370,20 @@ if ($Mode -eq 'speed') {
   exit 0
 }
 
-if ($ModelIndex -lt 0 -or $ModelIndex -gt 5 -or $EffortIndex -lt 0 -or $EffortIndex -gt 4) { throw 'Invalid selection index.' }
-$supported = @(@(0,1,2,3,4), @(0,1,2,3,4), @(0,1,2,3), @(0,1,2,3), @(0,1,2,3), @(0,1,2,3))
-if ($supported[$ModelIndex] -notcontains $EffortIndex) { throw 'This reasoning level is unavailable for the model.' }
+if ($ModelIndex -lt 0 -or $EffortIndex -lt 0) { throw 'Invalid selection index.' }
 
 $context = Get-Context $codex.Id
-Open-Silent $context.modelMenu
-Select-Silent (Find-Element $codex.Id ([System.Windows.Automation.ControlType]::MenuItem) $script:ModelNames[$ModelIndex] -Exact)
-$null = Find-Element $codex.Id ([System.Windows.Automation.ControlType]::Button) ('^' + [Regex]::Escape($script:ModelNames[$ModelIndex]) + '\s') -Timeout 3500
+$modelOptions = Get-MenuOptions $codex.Id $context.modelMenu 1 20
+if ($ModelIndex -ge $modelOptions.items.Count) { throw 'The requested model is unavailable.' }
+$model = $modelOptions.labels[$ModelIndex]
+Select-Silent $modelOptions.items[$ModelIndex]
+$null = Find-Element $codex.Id ([System.Windows.Automation.ControlType]::Button) ('^' + [Regex]::Escape($model) + '\s') -Timeout 3500
 
 $context = Get-Context $codex.Id
 $options = Get-MenuOptions $codex.Id $context.effortMenu 4 5 -Effort
 if ($EffortIndex -ge $options.items.Count) { throw 'The requested reasoning level is unavailable.' }
 $effort = $options.labels[$EffortIndex]
 Select-Silent $options.items[$EffortIndex]
-$expected = '^' + [Regex]::Escape($script:ModelNames[$ModelIndex]) + '\s+' + [Regex]::Escape($effort) + '$'
+$expected = '^' + [Regex]::Escape($model) + '\s+' + [Regex]::Escape($effort) + '$'
 $confirmed = Find-Element $codex.Id ([System.Windows.Automation.ControlType]::Button) $expected -Timeout 3500
 @{ ok = $true; selection = $confirmed.Current.Name; inputMode = 'uia-silent' } | ConvertTo-Json -Compress

@@ -4,12 +4,15 @@ import App from './App'
 import type { CodexOverlayBridge } from './types'
 
 const nativeEfforts = ['Ligero', 'Medio', 'Alto', 'Muy alto', 'Ultra']
+const nativeModels = ['5.6 Sol', '5.6 Terra', '5.6 Luna', '5.5', '5.4', '5.4 Mini']
 const nativeSpeeds = ['Estándar', 'Rápido']
 
 const createBridge = (): CodexOverlayBridge => ({
   setOpen: vi.fn().mockResolvedValue(undefined),
   getLabels: vi.fn().mockResolvedValue({
+    models: nativeModels,
     efforts: nativeEfforts,
+    supportedEfforts: [[0, 1, 2, 3, 4], [0, 1, 2, 3, 4], [0, 1, 2, 3], [0, 1, 2, 3], [0, 1, 2, 3], [0, 1, 2, 3]],
     speedLabel: 'Velocidad',
     speeds: nativeSpeeds,
     speedIndex: 0,
