@@ -22,7 +22,7 @@ public sealed partial class CodexAutomationService
 
         var effortOptions = new List<CodexCatalogEffort>();
         var effortIds = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        foreach (var effort in catalog.Models.SelectMany(static model => model.Efforts))
+        foreach (var effort in catalog.Models.SelectMany(DesktopPickerEfforts))
         {
             if (effortIds.ContainsKey(effort.Id))
             {
@@ -37,10 +37,10 @@ public sealed partial class CodexAutomationService
             .Select(static model => ToDesktopPickerModelName(model.DisplayName))
             .ToArray();
         var efforts = effortOptions
-            .Select(static effort => effort.DisplayName)
+            .Select(static effort => ToDesktopPickerEffortName(effort.Id))
             .ToArray();
         var supported = catalog.Models
-            .Select(model => (IReadOnlyList<int>)model.Efforts
+            .Select(model => (IReadOnlyList<int>)DesktopPickerEfforts(model)
                 .Select(effort => effortIds.TryGetValue(effort.Id, out var index) ? index : -1)
                 .Where(static index => index >= 0)
                 .Distinct()
@@ -54,6 +54,14 @@ public sealed partial class CodexAutomationService
         return ReadStateCore(cancellationToken);
     }
 
+    private static IEnumerable<CodexCatalogEffort> DesktopPickerEfforts(CodexCatalogModel model)
+    {
+        var hasUltra = model.Efforts.Any(static effort =>
+            string.Equals(effort.Id, "ultra", StringComparison.OrdinalIgnoreCase));
+        return model.Efforts.Where(effort =>
+            !(hasUltra && string.Equals(effort.Id, "max", StringComparison.OrdinalIgnoreCase)));
+    }
+
     private static string ToDesktopPickerModelName(string displayName)
     {
         var value = TextNormalizer.Normalize(displayName);
@@ -65,6 +73,26 @@ public sealed partial class CodexAutomationService
         value = Regex.Replace(value, @"(?<=\d)-(?=[A-Za-z])", " ", RegexOptions.CultureInvariant);
         value = value.Replace('-', ' ');
         return TextNormalizer.Normalize(value);
+    }
+
+    private static string ToDesktopPickerEffortName(string id)
+    {
+        var french = string.Equals(
+            CultureInfo.CurrentUICulture.TwoLetterISOLanguageName,
+            "fr",
+            StringComparison.OrdinalIgnoreCase);
+        return id.ToLowerInvariant() switch
+        {
+            "none" => french ? "Aucun" : "None",
+            "minimal" => "Minimal",
+            "low" => french ? "Léger" : "Low",
+            "medium" => french ? "Moyen" : "Medium",
+            "high" => french ? "Élevé" : "High",
+            "xhigh" => french ? "Très élevé" : "Extra high",
+            "max" => french ? "Maximum" : "Max",
+            "ultra" => "Ultra",
+            _ => TextNormalizer.Normalize(id.Replace('_', ' ').Replace('-', ' ')),
+        };
     }
 
     private void UpdateSpeedFromCatalog(CodexCatalog catalog)
