@@ -29,6 +29,9 @@ public partial class MainWindow
     private void Collapse_Click(object sender, RoutedEventArgs e) => SetOpen(false);
     private void Quit_Click(object sender, RoutedEventArgs e) => Application.Current.Shutdown();
 
+    private async void LinkThread_Click(object sender, RoutedEventArgs e) =>
+        await _viewModel.ToggleThreadLinkAsync();
+
     private async void ResetPosition_Click(object sender, RoutedEventArgs e)
     {
         _manualOffset = null;
