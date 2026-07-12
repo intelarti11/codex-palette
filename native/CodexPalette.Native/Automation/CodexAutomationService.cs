@@ -168,69 +168,33 @@ public sealed partial class CodexAutomationService
             throw new InvalidOperationException("This reasoning level is unavailable for the selected model.");
         }
 
+        if (!_threadClient.IsLinked)
+        {
+            throw new AutomationUnavailableException(
+                "Liez d’abord le fil actif avec le bouton chaîne. La palette n’ouvrira plus le menu natif automatiquement.");
+        }
+
         using var process = TryFindCodexProcess() ??
             throw new AutomationUnavailableException("The official Codex window could not be found.");
 
         var modelName = cached.Models[modelIndex];
         var effortName = cached.Efforts[effortIndex];
-        AutomationContext? context = null;
-        try
-        {
-            context = GetContext(process.Id, cancellationToken);
-            var modelOptions = GetMenuOptions(
-                process.Id, context.ModelMenu, 1, 20, false, cancellationToken);
-            var targetIndex = FindExactLabelIndex(modelOptions.Labels, modelName);
-            if (targetIndex < 0)
-            {
-                throw new AutomationUnavailableException($"The model '{modelName}' is not exposed by Codex.");
-            }
+        var identifiers = ResolveThreadSelectionIds(modelName, effortName, cancellationToken);
+        _threadClient.UpdateSettingsAsync(
+                identifiers.ModelId,
+                identifiers.EffortId,
+                updateServiceTier: false,
+                serviceTier: null,
+                cancellationToken)
+            .GetAwaiter()
+            .GetResult();
 
-            SelectSilent(modelOptions.Items[targetIndex], cancellationToken);
-        }
-        finally
-        {
-            CloseContext(context);
-        }
-
-        FindElement(
+        var selectorText = WaitForPassiveSelection(
             process.Id,
-            ControlType.Button,
-            "^" + Regex.Escape(modelName) + @"\s",
-            exact: false,
-            timeoutMilliseconds: 2500,
+            modelName,
+            effortName,
             cancellationToken);
-
-        context = null;
-        string effort;
-        try
-        {
-            context = GetContext(process.Id, cancellationToken);
-            var effortOptions = GetMenuOptions(
-                process.Id, context.EffortMenu, 1, 10, true, cancellationToken);
-            var targetIndex = FindExactLabelIndex(effortOptions.Labels, effortName);
-            if (targetIndex < 0)
-            {
-                throw new InvalidOperationException("The requested reasoning level is not exposed by Codex.");
-            }
-
-            effort = effortOptions.Labels[targetIndex];
-            SelectSilent(effortOptions.Items[targetIndex], cancellationToken);
-        }
-        finally
-        {
-            CloseContext(context);
-        }
-
-        var expected = "^" + Regex.Escape(modelName) + @"\s+" + Regex.Escape(effort) + "$";
-        var confirmed = FindElement(
-            process.Id,
-            ControlType.Button,
-            expected,
-            exact: false,
-            timeoutMilliseconds: 2500,
-            cancellationToken);
-
-        return new SelectionResult(confirmed.Current.Name);
+        return new SelectionResult(selectorText);
     }
 
     private SpeedSelectionResult ApplySpeedCore(int speedIndex, CancellationToken cancellationToken)
@@ -246,61 +210,27 @@ public sealed partial class CodexAutomationService
             throw new AutomationUnavailableException("The Codex speed catalog is unavailable.");
         }
 
+        if (!_threadClient.IsLinked)
+        {
+            throw new AutomationUnavailableException(
+                "Liez d’abord le fil actif avec le bouton chaîne. La palette n’ouvrira plus le menu natif automatiquement.");
+        }
+
         using var process = TryFindCodexProcess() ??
             throw new AutomationUnavailableException("The official Codex window could not be found.");
 
-        var selector = FindSelector(process.Id, 2500, cancellationToken);
-        var visibleBefore = GetVisibleRuntimeKeys(process.Id);
-        try
-        {
-            OpenSilent(selector, cancellationToken);
-            var popup = FindSelectorPopup(process.Id, selector, visibleBefore, cancellationToken);
-            var deadline = DateTime.UtcNow.AddMilliseconds(900);
-            AutomationElement? speedToggle = null;
-            while (DateTime.UtcNow < deadline)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                speedToggle = FindSpeedToggle(popup);
-                if (speedToggle is not null)
-                {
-                    break;
-                }
+        var serviceTier = ResolveThreadServiceTier(speedIndex, cancellationToken);
+        _threadClient.UpdateSettingsAsync(
+                model: null,
+                effort: null,
+                updateServiceTier: true,
+                serviceTier,
+                cancellationToken)
+            .GetAwaiter()
+            .GetResult();
 
-                Thread.Sleep(30);
-            }
-
-            if (speedToggle is null)
-            {
-                throw new AutomationUnavailableException(
-                    "The native speed toggle is not exposed in the Codex selector popup.");
-            }
-
-            SetToggleState(speedToggle, speedIndex == 1, cancellationToken);
-            var label = cached.Speeds[speedIndex];
-            var groupLabel = string.IsNullOrWhiteSpace(cached.SpeedLabel)
-                ? GetToggleSpeedGroupLabel(speedToggle)
-                : cached.SpeedLabel;
-            UpdateCachedSpeed(groupLabel, cached.Speeds);
-            Volatile.Write(ref _lastKnownSpeedIndex, speedIndex);
-            return new SpeedSelectionResult(speedIndex, label);
-        }
-        finally
-        {
-            CloseSilent(selector);
-        }
-    }
-
-    private static int FindExactLabelIndex(IReadOnlyList<string> labels, string target)
-    {
-        for (var index = 0; index < labels.Count; index++)
-        {
-            if (string.Equals(labels[index], target, StringComparison.Ordinal))
-            {
-                return index;
-            }
-        }
-
-        return -1;
+        Volatile.Write(ref _lastKnownSpeedIndex, speedIndex);
+        return new SpeedSelectionResult(speedIndex, cached.Speeds[speedIndex]);
     }
 }
 
