@@ -25,7 +25,6 @@ public sealed partial class CodexAutomationService
         {
             pattern.Expand();
             WaitForExpansionState(element, ExpandCollapseState.Expanded, 500, cancellationToken);
-            PopupDiagnostics.CaptureAfterExpand(element);
         }
     }
 
