@@ -68,6 +68,44 @@ public sealed partial class CodexAutomationService
             $"The option '{SafeName(element)}' has no silent UI Automation selection action.");
     }
 
+    private static void SetToggleState(
+        AutomationElement element,
+        bool enabled,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!TryGetPattern(element, TogglePattern.Pattern, out var toggleValue))
+        {
+            throw new AutomationUnavailableException(
+                $"The control '{SafeName(element)}' does not expose TogglePattern.");
+        }
+
+        var pattern = (TogglePattern)toggleValue;
+        var desired = enabled ? ToggleState.On : ToggleState.Off;
+        if (pattern.Current.ToggleState != desired)
+        {
+            pattern.Toggle();
+            var deadline = DateTime.UtcNow.AddMilliseconds(500);
+            while (DateTime.UtcNow < deadline)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                try
+                {
+                    if (pattern.Current.ToggleState == desired)
+                    {
+                        break;
+                    }
+                }
+                catch
+                {
+                    break;
+                }
+
+                Thread.Sleep(20);
+            }
+        }
+    }
+
     private static void CloseSilent(AutomationElement? element)
     {
         if (element is null)
