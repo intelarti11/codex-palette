@@ -17,17 +17,24 @@ Codex Palette Overlay does not replace Codex and does not run a second chat clie
 - Appears only while Codex or the overlay is active.
 - Does not read or store OpenAI credentials.
 
+## Native WPF port
+
+A lighter native Windows implementation is being validated in [PR #2](https://github.com/intelarti11/codex-palette/pull/2). It uses WPF and direct `System.Windows.Automation` calls instead of Electron and the PowerShell helper.
+
+The native discovery code does not assume Chromium exposes selector rows as `MenuItem` or popup content as `Menu`. It combines `AutomationId`, before/after `RuntimeId` snapshots, UI Automation patterns, localized accessible labels, and structural option sets. See [`native/README.md`](native/README.md) for details.
+
 ## Compatibility
 
 - Windows 10 or Windows 11
 - The official Codex desktop app
-- Node.js 22 or newer for development
+- Node.js 22 or newer for Electron development
+- .NET 8 SDK for native development
 
-The integration depends on accessibility names exposed by the current Codex desktop UI. A future Codex UI update may require selector adjustments.
+The integration depends on accessibility data exposed by the current Codex desktop UI. A future Codex UI update may require selector adjustments.
 
 ## Install
 
-The current community version is available from the `main` branch. Older installers on the Releases page may not yet include silent selection and the localized speed control.
+The current community Electron version is available from the `main` branch. Older installers on the Releases page may not yet include silent selection and the localized speed control.
 
 ```powershell
 git clone https://github.com/intelarti11/codex-palette.git
@@ -51,7 +58,7 @@ npm test
 npm run build
 ```
 
-## How it works
+## How the Electron version works
 
 ```text
 React palette
@@ -84,4 +91,4 @@ Apache License 2.0. See [`LICENSE`](LICENSE).
 
 ## Silent selection
 
-This variant does not call `SetCursorPos`, `mouse_event`, `SetForegroundWindow`, or `AttachThreadInput`. It opens and selects the native Codex controls through `ExpandCollapsePattern`, `InvokePattern`, `SelectionItemPattern`, and `LegacyIAccessiblePattern`. If Codex stops exposing a usable accessibility action after an update, the operation fails instead of falling back to physical mouse input.
+This variant does not call `SetCursorPos`, `mouse_event`, `SetForegroundWindow`, or `AttachThreadInput`. It opens and selects the native Codex controls through `ExpandCollapsePattern`, `InvokePattern`, and `SelectionItemPattern`. If Codex stops exposing a usable accessibility action after an update, the operation fails instead of falling back to physical mouse input.

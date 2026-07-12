@@ -1,0 +1,81 @@
+name: Native Windows
+
+on:
+  push:
+    branches:
+      - main
+      - agent/native-wpf-port
+    paths:
+      - "native/**"
+      - ".github/workflows/native-windows.yml"
+      - "README.md"
+      - "native/README.md"
+  pull_request:
+    paths:
+      - "native/**"
+      - ".github/workflows/native-windows.yml"
+      - "README.md"
+      - "native/README.md"
+  workflow_dispatch:
+
+jobs:
+  test-and-publish:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Restore
+        run: dotnet restore native/CodexPalette.Native.sln
+
+      - name: Test
+        id: native-tests
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force artifacts/diagnostics | Out-Null
+          dotnet test native/CodexPalette.Native.sln --configuration Release --no-restore 2>&1 |
+            Tee-Object -FilePath artifacts/diagnostics/test.log
+          exit $LASTEXITCODE
+
+      - name: Upload test diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: CodexPalette-native-diagnostics
+          path: artifacts/diagnostics/test.log
+          if-no-files-found: error
+
+      - name: Stop after test failure
+        if: steps.native-tests.outcome == 'failure'
+        run: exit 1
+
+      - name: Publish self-contained portable executable
+        run: >-
+          dotnet publish native/CodexPalette.Native/CodexPalette.Native.csproj
+          --configuration Release
+          --runtime win-x64
+          --self-contained true
+          --no-restore
+          --output artifacts/native-win-x64
+          -p:PublishSingleFile=true
+          -p:EnableCompressionInSingleFile=true
+
+      - name: Name and measure executable
+        shell: pwsh
+        run: |
+          Rename-Item artifacts/native-win-x64/CodexPalette.exe CodexPalette.Portable.exe
+          Get-Item artifacts/native-win-x64/CodexPalette.Portable.exe |
+            Select-Object Name, Length
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CodexPalette-native-portable-win-x64
+          path: artifacts/native-win-x64/CodexPalette.Portable.exe
+          if-no-files-found: error
