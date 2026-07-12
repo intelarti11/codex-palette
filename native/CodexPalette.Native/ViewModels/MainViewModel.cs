@@ -89,10 +89,7 @@ public sealed class MainViewModel : ObservableObject
         {
             var state = await _automation.ReadStateAsync();
             ApplyNativeState(state);
-            if (!showErrors)
-            {
-                Notice = null;
-            }
+            Notice = null;
         }
         catch (Exception exception)
         {
@@ -139,7 +136,7 @@ public sealed class MainViewModel : ObservableObject
         Notice = null;
         try
         {
-            var result = await _automation.ApplySelectionAsync(cell.ModelIndex, cell.EffortIndex);
+            await _automation.ApplySelectionAsync(cell.ModelIndex, cell.EffortIndex);
             _selectedModelIndex = cell.ModelIndex;
             _selectedModelName = cell.ModelName;
             _selectedEffortIndex = cell.EffortIndex;
@@ -150,7 +147,7 @@ public sealed class MainViewModel : ObservableObject
             OnPropertyChanged(nameof(SelectedModelName));
             OnPropertyChanged(nameof(SelectedEffortName));
             OnPropertyChanged(nameof(SelectedAccentBrush));
-            Notice = result.DisplayName;
+            Notice = null;
             return true;
         }
         catch (Exception exception)
@@ -180,7 +177,7 @@ public sealed class MainViewModel : ObservableObject
             var result = await _automation.ApplySpeedAsync(option.Index);
             _selectedSpeedIndex = result.Index;
             UpdateSpeedSelection();
-            Notice = result.Label;
+            Notice = null;
         }
         catch (Exception exception)
         {
