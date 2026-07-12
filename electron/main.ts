@@ -12,7 +12,9 @@ const CLOSED_SIZE = { width: 212, height: 50 }
 const OPEN_SIZE = { width: 680, height: 360 }
 type Point = { x: number; y: number }
 type NativeLabels = {
+  models: string[]
   efforts: string[]
+  supportedEfforts: number[][]
   speedLabel: string
   speeds: string[]
   speedIndex: number
@@ -27,7 +29,9 @@ let anchor = { x: 951, y: 756 }
 let selectorAnchor: Point | null = null
 let manualOffset: Point | null = null
 let nativeLabels: NativeLabels = {
-  efforts: ['Léger', 'Moyen', 'Élevé', 'Très élevé', 'Ultra'],
+  models: [],
+  efforts: [],
+  supportedEfforts: [],
   speedLabel: '',
   speeds: [],
   speedIndex: -1,
@@ -57,16 +61,20 @@ async function loadNativeLabels() {
       { windowsHide: true, timeout: 12_000 },
     )
     const result = JSON.parse(stdout.trim()) as Partial<NativeLabels>
-    if (Array.isArray(result.efforts) && result.efforts.length === 5) {
+    if (Array.isArray(result.models) && result.models.length > 0 && Array.isArray(result.efforts) && result.efforts.length > 0) {
       nativeLabels = {
+        models: result.models.map(String),
         efforts: result.efforts.map(String),
+        supportedEfforts: Array.isArray(result.supportedEfforts)
+          ? result.supportedEfforts.map((indices) => Array.isArray(indices) ? indices.map(Number) : [])
+          : [],
         speedLabel: typeof result.speedLabel === 'string' ? result.speedLabel : '',
         speeds: Array.isArray(result.speeds) ? result.speeds.map(String).slice(0, 2) : [],
         speedIndex: Number.isInteger(result.speedIndex) ? Number(result.speedIndex) : -1,
       }
     }
   } catch {
-    // Keep the bundled fallback if Codex is not ready yet.
+    // Keep labels empty until the native Codex controls are available.
   }
 }
 

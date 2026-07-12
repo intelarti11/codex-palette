@@ -26,16 +26,11 @@ type DragState = {
   dragging: boolean
 }
 
-const models = [
-  { name: '5.6 Sol', icon: Sun, tone: 'solar', efforts: [0, 1, 2, 3, 4] },
-  { name: '5.6 Terra', icon: Sprout, tone: 'terra', efforts: [0, 1, 2, 3, 4] },
-  { name: '5.6 Luna', icon: Moon, tone: 'luna', efforts: [0, 1, 2, 3] },
-  { name: '5.5', icon: Waves, tone: 'ocean', efforts: [0, 1, 2, 3] },
-  { name: '5.4', icon: Flame, tone: 'ember', efforts: [0, 1, 2, 3] },
-  { name: '5.4 Mini', icon: Sparkles, tone: 'rose', efforts: [0, 1, 2, 3] },
+const modelVisuals = [
+  { icon: Sun, tone: 'solar' }, { icon: Sprout, tone: 'terra' },
+  { icon: Moon, tone: 'luna' }, { icon: Waves, tone: 'ocean' },
+  { icon: Flame, tone: 'ember' }, { icon: Sparkles, tone: 'rose' },
 ] as const
-
-const fallbackEfforts = ['Léger', 'Moyen', 'Élevé', 'Très élevé', 'Ultra']
 const storageKey = 'codex-palette-overlay.selection.v1'
 
 const readSelection = (): Selection => {
@@ -55,7 +50,9 @@ export default function App() {
   const [selection, setSelection] = useState<Selection>(readSelection)
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
-  const [efforts, setEfforts] = useState<string[]>(fallbackEfforts)
+  const [modelNames, setModelNames] = useState<string[]>([])
+  const [efforts, setEfforts] = useState<string[]>([])
+  const [supportedEfforts, setSupportedEfforts] = useState<number[][]>([])
   const [speedLabel, setSpeedLabel] = useState('')
   const [speeds, setSpeeds] = useState<string[]>([])
   const [speedIndex, setSpeedIndex] = useState(-1)
@@ -70,7 +67,11 @@ export default function App() {
     const refreshLabels = async () => {
       const labels = await window.codexOverlay?.getLabels()
       if (!active || !labels) return
-      if (labels.efforts.length === 5) setEfforts(labels.efforts)
+      if (labels.models.length > 0 && labels.efforts.length > 0) {
+        setModelNames(labels.models)
+        setEfforts(labels.efforts)
+        setSupportedEfforts(labels.supportedEfforts)
+      }
       if (labels.speeds.length === 2) {
         setSpeedLabel(labels.speedLabel)
         setSpeeds(labels.speeds)
@@ -180,14 +181,14 @@ export default function App() {
       await window.codexOverlay?.apply(next)
       setSelection(next)
       localStorage.setItem(storageKey, JSON.stringify(next))
-      setNotice(`${models[next.modelIndex].name} · ${efforts[next.effortIndex]}`)
+      setNotice(`${modelNames[next.modelIndex]} · ${efforts[next.effortIndex]}`)
       await collapse()
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Le sélecteur natif n’a pas répondu.')
     } finally {
       setBusy(false)
     }
-  }, [collapse, efforts])
+  }, [collapse, efforts, modelNames])
 
   const applySpeed = useCallback(async (nextSpeedIndex: number) => {
     if (nextSpeedIndex === speedIndex) return
@@ -209,7 +210,8 @@ export default function App() {
     setNotice(null)
   }, [])
 
-  const selectedModel = models[selection.modelIndex] ?? models[0]
+  const selectedVisual = modelVisuals[selection.modelIndex] ?? modelVisuals[0]
+  const selectedModelName = modelNames[selection.modelIndex] ?? ''
 
   if (!open) {
     return (
@@ -217,9 +219,9 @@ export default function App() {
         <div className="drag-handle">
           <GripVertical size={15} />
         </div>
-        <button className={`native-trigger tone-${selectedModel.tone}`} type="button" onClick={() => void toggle()}>
-          <strong>{selectedModel.name}</strong>
-          <span>{efforts[selection.effortIndex]}</span>
+        <button className={`native-trigger tone-${selectedVisual.tone}`} type="button" onClick={() => void toggle()} disabled={!selectedModelName}>
+          <strong>{selectedModelName}</strong>
+          <span>{efforts[selection.effortIndex] ?? ''}</span>
           <ChevronDown size={15} />
         </button>
       </main>
@@ -245,26 +247,29 @@ export default function App() {
 
         <div className="matrix">
           <div className="matrix-corner" />
-          {models.map(({ name, icon: Icon, tone }) => (
+          {modelNames.map((name, modelIndex) => {
+            const { icon: Icon, tone } = modelVisuals[modelIndex] ?? modelVisuals[0]
+            return (
             <div className={`model-heading tone-${tone}`} key={name}>
               <Icon size={16} />
               <span>{name}</span>
             </div>
-          ))}
+          )})}
 
           {efforts.map((effort, effortIndex) => (
             <div className="matrix-row" key={effort}>
               <div className="effort-label">{effort}</div>
-              {models.map((model, modelIndex) => {
-                const supported = model.efforts.includes(effortIndex as never)
+              {modelNames.map((modelName, modelIndex) => {
+                const visual = modelVisuals[modelIndex] ?? modelVisuals[0]
+                const supported = supportedEfforts[modelIndex]?.includes(effortIndex) ?? true
                 const selected = selection.modelIndex === modelIndex && selection.effortIndex === effortIndex
                 return (
                   <button
-                    className={`effort-cell tone-${model.tone} ${selected ? 'selected' : ''}`}
+                    className={`effort-cell tone-${visual.tone} ${selected ? 'selected' : ''}`}
                     type="button"
-                    key={`${model.name}-${effort}`}
+                    key={`${modelName}-${effort}`}
                     disabled={!supported || busy}
-                    aria-label={`${model.name}, ${effort}`}
+                    aria-label={`${modelName}, ${effort}`}
                     aria-pressed={selected}
                     style={{ '--level': effortIndex + 1 } as React.CSSProperties}
                     onClick={() => void apply({ modelIndex, effortIndex })}
@@ -308,9 +313,9 @@ export default function App() {
         <div className="drag-handle open-grip">
           <GripVertical size={15} />
         </div>
-        <button className={`native-trigger tone-${selectedModel.tone}`} type="button" onClick={() => void toggle()}>
-          <strong>{selectedModel.name}</strong>
-          <span>{efforts[selection.effortIndex]}</span>
+        <button className={`native-trigger tone-${selectedVisual.tone}`} type="button" onClick={() => void toggle()}>
+          <strong>{selectedModelName}</strong>
+          <span>{efforts[selection.effortIndex] ?? ''}</span>
           <ChevronDown size={15} />
         </button>
       </div>
