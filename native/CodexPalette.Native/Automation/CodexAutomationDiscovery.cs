@@ -1,6 +1,4 @@
-using System.Diagnostics;
-using System.Text.RegularExpressions;
-using System.Windows.Automation;
+using System.Globalization;
 using CodexPalette.Native.Models;
 
 namespace CodexPalette.Native.Automation;
@@ -9,142 +7,85 @@ public sealed partial class CodexAutomationService
 {
     private NativePaletteState DiscoverPaletteCore(CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         using var process = TryFindCodexProcess() ??
             throw new AutomationUnavailableException("The official Codex window could not be found.");
 
-        var initial = GetContext(process.Id, cancellationToken);
-        var originalModel = initial.Model;
-        var originalEffort = initial.Effort;
-        var models = initial.ModelOptions.Labels.ToArray();
-        CloseContext(initial);
-
-        var labelsByModel = new List<IReadOnlyList<string>>(models.Length);
-        try
+        // Catalog discovery is deliberately independent from the visible selector. It does not
+        // expand the main menu, visit models, change the current selection, or move focus.
+        var catalog = _catalogClient.Load(process, cancellationToken);
+        if (catalog.Models.Count == 0)
         {
-            foreach (var model in models)
+            throw new AutomationUnavailableException("Codex returned an empty model catalog.");
+        }
+
+        var effortOptions = new List<CodexCatalogEffort>();
+        var effortIds = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var effort in catalog.Models.SelectMany(static model => model.Efforts))
+        {
+            if (effortIds.ContainsKey(effort.Id))
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                SelectModel(process.Id, model, cancellationToken);
-                var context = GetContext(process.Id, cancellationToken);
-                try
-                {
-                    labelsByModel.Add(context.EffortOptions.Labels.ToArray());
-                }
-                finally
-                {
-                    CloseContext(context);
-                }
+                continue;
             }
-        }
-        finally
-        {
-            RestoreSelection(process.Id, originalModel, originalEffort, cancellationToken);
+
+            effortIds.Add(effort.Id, effortOptions.Count);
+            effortOptions.Add(effort);
         }
 
-        var efforts = new List<string>();
-        foreach (var labels in labelsByModel)
-        {
-            foreach (var label in labels)
-            {
-                if (!efforts.Contains(label, StringComparer.Ordinal))
-                {
-                    efforts.Add(label);
-                }
-            }
-        }
-
-        var supported = labelsByModel
-            .Select(labels => (IReadOnlyList<int>)labels
-                .Select(label => efforts.FindIndex(value => string.Equals(value, label, StringComparison.Ordinal)))
+        var models = catalog.Models
+            .Select(static model => model.DisplayName)
+            .ToArray();
+        var efforts = effortOptions
+            .Select(static effort => effort.DisplayName)
+            .ToArray();
+        var supported = catalog.Models
+            .Select(model => (IReadOnlyList<int>)model.Efforts
+                .Select(effort => effortIds.TryGetValue(effort.Id, out var index) ? index : -1)
                 .Where(static index => index >= 0)
                 .Distinct()
                 .Order()
                 .ToArray())
             .ToArray();
-        UpdateCachedMatrix(models, efforts, supported);
 
-        AutomationContext? speedContext = null;
-        SpeedDescriptor? speed = null;
-        try
-        {
-            speedContext = GetContext(process.Id, cancellationToken);
-            if (speedContext.SpeedMenu is not null)
-            {
-                speed = GetSpeed(process.Id, speedContext, cancellationToken);
-                UpdateCachedSpeed(speed.Label, speed.Labels);
-            }
-        }
-        catch
-        {
-            // Speed is optional and must not prevent the matrix from being discovered.
-        }
-        finally
-        {
-            CloseSilent(speed?.Control);
-            CloseContext(speedContext);
-        }
+        UpdateCachedMatrix(models, efforts, supported);
+        UpdateSpeedFromCatalog(catalog);
 
         return ReadStateCore(cancellationToken);
     }
 
-    private void SelectModel(int processId, string model, CancellationToken cancellationToken)
+    private void UpdateSpeedFromCatalog(CodexCatalog catalog)
     {
-        AutomationContext? context = null;
-        try
+        var tiers = new List<CodexCatalogServiceTier>();
+        var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var tier in catalog.Models.SelectMany(static model => model.ServiceTiers))
         {
-            context = GetContext(processId, cancellationToken);
-            var options = GetMenuOptions(
-                processId, context.ModelMenu, 1, 20, false, cancellationToken);
-            var index = FindExactLabelIndex(options.Labels, model);
-            if (index < 0)
+            if (ids.Add(tier.Id))
             {
-                throw new AutomationUnavailableException($"The model '{model}' is no longer exposed by Codex.");
-            }
-
-            SelectSilent(options.Items[index], cancellationToken);
-        }
-        finally
-        {
-            CloseContext(context);
-        }
-
-        FindElement(
-            processId,
-            ControlType.Button,
-            "^" + Regex.Escape(model) + @"(?:\s|$)",
-            exact: false,
-            timeoutMilliseconds: 2500,
-            cancellationToken);
-    }
-
-    private void RestoreSelection(
-        int processId,
-        string model,
-        string effort,
-        CancellationToken cancellationToken)
-    {
-        try
-        {
-            SelectModel(processId, model, cancellationToken);
-            var context = GetContext(processId, cancellationToken);
-            try
-            {
-                var options = GetMenuOptions(
-                    processId, context.EffortMenu, 1, 10, true, cancellationToken);
-                var index = FindExactLabelIndex(options.Labels, effort);
-                if (index >= 0)
-                {
-                    SelectSilent(options.Items[index], cancellationToken);
-                }
-            }
-            finally
-            {
-                CloseContext(context);
+                tiers.Add(tier);
             }
         }
-        catch
+
+        if (tiers.Count < 2)
         {
-            // Best effort: discovery data is still useful if Codex changed during the scan.
+            return;
         }
+
+        var standard = tiers.FirstOrDefault(tier =>
+            string.Equals(tier.Id, "standard", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(tier.Id, "default", StringComparison.OrdinalIgnoreCase));
+        var alternate = tiers.FirstOrDefault(tier => standard is null ||
+            !string.Equals(tier.Id, standard.Id, StringComparison.OrdinalIgnoreCase));
+        if (standard is null || alternate is null)
+        {
+            return;
+        }
+
+        var speedLabel = string.Equals(
+            CultureInfo.CurrentUICulture.TwoLetterISOLanguageName,
+            "fr",
+            StringComparison.OrdinalIgnoreCase)
+            ? "Vitesse"
+            : "Speed";
+        UpdateCachedSpeed(speedLabel, new[] { standard.DisplayName, alternate.DisplayName });
     }
 }
