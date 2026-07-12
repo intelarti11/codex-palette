@@ -106,6 +106,10 @@ public sealed partial class CodexAutomationService
             ? FindLabelIndex(cached.Efforts, effort)
             : -1;
         var speedIndex = FindPassiveSpeedIndex(process.Id, cached.Speeds);
+        if (speedIndex < 0)
+        {
+            speedIndex = Volatile.Read(ref _lastKnownSpeedIndex);
+        }
 
         return new NativePaletteState(
             cached.Models,
@@ -245,14 +249,23 @@ public sealed partial class CodexAutomationService
         {
             context = GetContext(process.Id, cancellationToken);
             speed = GetSpeed(process.Id, context, cancellationToken);
-            if (speedIndex >= speed.Items.Count)
+            if (!speed.IsToggle && speedIndex >= speed.Items.Count)
             {
                 throw new AutomationUnavailableException("The requested speed is not exposed by Codex.");
             }
 
             var label = speed.Labels[speedIndex];
             UpdateCachedSpeed(speed.Label, speed.Labels);
-            SelectSilent(speed.Items[speedIndex], cancellationToken);
+            if (speed.IsToggle)
+            {
+                SetToggleState(speed.Control, speedIndex == 1, cancellationToken);
+            }
+            else
+            {
+                SelectSilent(speed.Items[speedIndex], cancellationToken);
+            }
+
+            Volatile.Write(ref _lastKnownSpeedIndex, speedIndex);
             return new SpeedSelectionResult(speedIndex, label);
         }
         finally
