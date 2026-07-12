@@ -121,7 +121,6 @@ internal static class PopupDiagnostics
         AddPattern(patterns, element, SelectionPattern.Pattern, "Selection");
         AddPattern(patterns, element, TogglePattern.Pattern, "Toggle");
         AddPattern(patterns, element, ValuePattern.Pattern, "Value");
-        AddPattern(patterns, element, LegacyIAccessiblePattern.Pattern, "LegacyIAccessible");
 
         var bounds = current.BoundingRectangle;
         var runtime = SafeRuntimeId(element);
