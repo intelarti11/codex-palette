@@ -57,6 +57,7 @@ public partial class MainWindow : Window
     {
         _automation.PassiveStateChanged -= Automation_PassiveStateChanged;
         _tracker.Dispose();
+        _automation.UnlinkActiveThread();
         _automation.Dispose();
     }
 
