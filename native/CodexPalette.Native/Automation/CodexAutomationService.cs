@@ -240,38 +240,53 @@ public sealed partial class CodexAutomationService
             throw new ArgumentOutOfRangeException(nameof(speedIndex), "Invalid speed index.");
         }
 
+        var cached = GetCachedDiscovery();
+        if (cached.Speeds.Count != 2)
+        {
+            throw new AutomationUnavailableException("The Codex speed catalog is unavailable.");
+        }
+
         using var process = TryFindCodexProcess() ??
             throw new AutomationUnavailableException("The official Codex window could not be found.");
 
-        AutomationContext? context = null;
-        SpeedDescriptor? speed = null;
+        var selector = FindSelector(process.Id, 2500, cancellationToken);
+        var visibleBefore = GetVisibleRuntimeKeys(process.Id);
         try
         {
-            context = GetContext(process.Id, cancellationToken);
-            speed = GetSpeed(process.Id, context, cancellationToken);
-            if (!speed.IsToggle && speedIndex >= speed.Items.Count)
+            OpenSilent(selector, cancellationToken);
+            var popup = FindSelectorPopup(process.Id, selector, visibleBefore, cancellationToken);
+            var deadline = DateTime.UtcNow.AddMilliseconds(900);
+            AutomationElement? speedToggle = null;
+            while (DateTime.UtcNow < deadline)
             {
-                throw new AutomationUnavailableException("The requested speed is not exposed by Codex.");
+                cancellationToken.ThrowIfCancellationRequested();
+                speedToggle = FindSpeedToggle(popup);
+                if (speedToggle is not null)
+                {
+                    break;
+                }
+
+                Thread.Sleep(30);
             }
 
-            var label = speed.Labels[speedIndex];
-            UpdateCachedSpeed(speed.Label, speed.Labels);
-            if (speed.IsToggle)
+            if (speedToggle is null)
             {
-                SetToggleState(speed.Control, speedIndex == 1, cancellationToken);
-            }
-            else
-            {
-                SelectSilent(speed.Items[speedIndex], cancellationToken);
+                throw new AutomationUnavailableException(
+                    "The native speed toggle is not exposed in the Codex selector popup.");
             }
 
+            SetToggleState(speedToggle, speedIndex == 1, cancellationToken);
+            var label = cached.Speeds[speedIndex];
+            var groupLabel = string.IsNullOrWhiteSpace(cached.SpeedLabel)
+                ? GetToggleSpeedGroupLabel(speedToggle)
+                : cached.SpeedLabel;
+            UpdateCachedSpeed(groupLabel, cached.Speeds);
             Volatile.Write(ref _lastKnownSpeedIndex, speedIndex);
             return new SpeedSelectionResult(speedIndex, label);
         }
         finally
         {
-            CloseSilent(speed?.Control);
-            CloseContext(context);
+            CloseSilent(selector);
         }
     }
 
