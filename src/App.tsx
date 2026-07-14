@@ -2,7 +2,6 @@ import {
   Check,
   ChevronDown,
   Flame,
-  GripVertical,
   Gauge,
   Minus,
   Moon,
@@ -13,7 +12,8 @@ import {
   Waves,
   X,
 } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState, type MouseEvent, type PointerEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type MouseEvent, type PointerEvent } from 'react'
+import type { NativeSelection, SelectorPresentation } from './types'
 
 type Selection = { modelIndex: number; effortIndex: number }
 type DragState = {
@@ -32,6 +32,27 @@ const modelVisuals = [
   { icon: Flame, tone: 'ember' }, { icon: Sparkles, tone: 'rose' },
 ] as const
 const storageKey = 'codex-palette-overlay.selection.v1'
+const fallbackSelectorPresentation: SelectorPresentation = {
+  width: 136,
+  height: 28,
+  paddingLeft: '8px',
+  paddingRight: '8px',
+  gap: '4px',
+  border: '1px solid rgba(0, 0, 0, 0)',
+  borderRadius: '9999px',
+  backgroundColor: 'rgba(0, 0, 0, 0)',
+  hoverBackgroundColor: 'rgba(26, 28, 31, 0.053)',
+  color: 'rgba(26, 28, 31, 0.494)',
+  modelColor: 'rgb(26, 28, 31)',
+  fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+  fontSize: '13px',
+  fontWeight: '400',
+  lineHeight: '18px',
+  boxShadow: 'none',
+  iconSize: 14,
+}
+
+export const compactModelName = (name: string) => name.replace(/^GPT-/i, '')
 
 const readSelection = (): Selection => {
   try {
@@ -49,6 +70,9 @@ export default function App() {
   const [open, setOpen] = useState(false)
   const [selection, setSelection] = useState<Selection>(readSelection)
   const [busy, setBusy] = useState(false)
+  const [activating, setActivating] = useState(false)
+  const [activationError, setActivationError] = useState('')
+  const [uiStrings, setUiStrings] = useState({ enableSilentMode: 'Restart required', restartingCodex: 'Restarting' })
   const [notice, setNotice] = useState<string | null>(null)
   const [modelNames, setModelNames] = useState<string[]>([])
   const [efforts, setEfforts] = useState<string[]>([])
@@ -56,9 +80,23 @@ export default function App() {
   const [speedLabel, setSpeedLabel] = useState('')
   const [speeds, setSpeeds] = useState<string[]>([])
   const [speedIndex, setSpeedIndex] = useState(-1)
+  const [selectorPresentation, setSelectorPresentation] = useState(fallbackSelectorPresentation)
   const dragState = useRef<DragState | null>(null)
   const dragFrame = useRef<number | null>(null)
   const lastDragEnd = useRef(0)
+
+  const acceptNativeSelection = useCallback((current: NativeSelection) => {
+    if (
+      !Number.isInteger(current.modelIndex)
+      || !Number.isInteger(current.effortIndex)
+      || current.modelIndex < 0
+      || current.effortIndex < 0
+    ) return
+    const next = { modelIndex: current.modelIndex, effortIndex: current.effortIndex }
+    setSelection(next)
+    localStorage.setItem(storageKey, JSON.stringify(next))
+    if (current.speedIndex >= 0) setSpeedIndex(current.speedIndex)
+  }, [])
 
   useEffect(() => {
     let active = true
@@ -67,7 +105,11 @@ export default function App() {
     const refreshLabels = async () => {
       const labels = await window.codexOverlay?.getLabels()
       if (!active || !labels) return
-      if (labels.models.length > 0 && labels.efforts.length > 0) {
+      if (labels.uiStrings) setUiStrings(labels.uiStrings)
+      if (labels.selectorPresentation) setSelectorPresentation(labels.selectorPresentation)
+      if (labels.currentSelection) acceptNativeSelection(labels.currentSelection)
+      const hasSelectorLabels = labels.models.length > 0 && labels.efforts.length > 0
+      if (hasSelectorLabels) {
         setModelNames(labels.models)
         setEfforts(labels.efforts)
         setSupportedEfforts(labels.supportedEfforts)
@@ -76,8 +118,9 @@ export default function App() {
         setSpeedLabel(labels.speedLabel)
         setSpeeds(labels.speeds)
         setSpeedIndex(labels.speedIndex)
-      } else {
-        retryTimer = window.setTimeout(() => void refreshLabels(), 2500)
+      }
+      if (!hasSelectorLabels || labels.complete === false) {
+        retryTimer = window.setTimeout(() => void refreshLabels(), 1000)
       }
     }
 
@@ -99,7 +142,7 @@ export default function App() {
   }, [])
 
   const startWindowDrag = useCallback((event: PointerEvent<HTMLElement>) => {
-    if (event.button !== 0 || !window.codexOverlay) return
+    if (event.button !== 0 || !window.codexOverlay || (event.target as HTMLElement).closest('button')) return
     const state: DragState = {
       pointerId: event.pointerId,
       startX: event.screenX,
@@ -163,6 +206,11 @@ export default function App() {
     onClickCapture: suppressClickAfterDrag,
   }
 
+  const showContextMenu = useCallback((event: MouseEvent<HTMLElement>) => {
+    event.preventDefault()
+    window.codexOverlay?.showContextMenu()
+  }, [acceptNativeSelection])
+
   const collapse = useCallback(async () => {
     setOpen(false)
     await window.codexOverlay?.setOpen(false)
@@ -178,13 +226,14 @@ export default function App() {
     setBusy(true)
     setNotice(null)
     try {
-      await window.codexOverlay?.apply(next)
+      const result = await window.codexOverlay?.apply(next)
       setSelection(next)
       localStorage.setItem(storageKey, JSON.stringify(next))
-      setNotice(`${modelNames[next.modelIndex]} · ${efforts[next.effortIndex]}`)
+      const mode = result?.inputMode === 'cdp-internal' ? ' · Direct' : ''
+      setNotice(`${compactModelName(modelNames[next.modelIndex] ?? '')} · ${efforts[next.effortIndex]}${mode}`)
       await collapse()
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : 'Le sélecteur natif n’a pas répondu.')
+      setNotice(error instanceof Error ? error.message : 'The native selector did not respond.')
     } finally {
       setBusy(false)
     }
@@ -199,7 +248,7 @@ export default function App() {
       setSpeedIndex(nextSpeedIndex)
       setNotice(speeds[nextSpeedIndex] ?? null)
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : 'Le sélecteur natif n’a pas répondu.')
+      setNotice(error instanceof Error ? error.message : 'The native selector did not respond.')
     } finally {
       setBusy(false)
     }
@@ -210,28 +259,75 @@ export default function App() {
     setNotice(null)
   }, [])
 
-  const selectedVisual = modelVisuals[selection.modelIndex] ?? modelVisuals[0]
+  useEffect(() => window.codexOverlay?.onSelectorPresentation(setSelectorPresentation), [])
+  useEffect(() => window.codexOverlay?.onSelectionChanged(acceptNativeSelection), [acceptNativeSelection])
+  useEffect(() => window.codexOverlay?.onOpenChanged(setOpen), [])
+
+  const enableSilentMode = useCallback(async () => {
+    setActivating(true)
+    setActivationError('')
+    try {
+      await window.codexOverlay?.enableSilentMode()
+    } catch (error) {
+      setActivationError(error instanceof Error ? error.message : 'Could not restart Codex.')
+      setActivating(false)
+    }
+  }, [])
+
   const selectedModelName = modelNames[selection.modelIndex] ?? ''
+  const selectedVisual = modelVisuals[selection.modelIndex] ?? modelVisuals[0]
+  const selectedToneClass = selectedModelName ? ` has-model-tone tone-${selectedVisual.tone}` : ''
+  const displaySelectedModelName = compactModelName(selectedModelName)
+  const selectedEffort = efforts[selection.effortIndex] ?? ''
+  const selectorStyle = {
+    '--selector-width': `${selectorPresentation.width}px`,
+    '--selector-height': `${selectorPresentation.height}px`,
+    '--native-padding-left': selectorPresentation.paddingLeft,
+    '--native-padding-right': selectorPresentation.paddingRight,
+    '--native-gap': selectorPresentation.gap,
+    '--native-border': selectorPresentation.border,
+    '--native-radius': selectorPresentation.borderRadius,
+    '--native-background': selectorPresentation.backgroundColor,
+    '--native-hover-background': selectorPresentation.hoverBackgroundColor,
+    '--native-color': selectorPresentation.color,
+    '--native-model-color': selectorPresentation.modelColor,
+    '--native-font-family': selectorPresentation.fontFamily,
+    '--native-font-size': selectorPresentation.fontSize,
+    '--native-font-weight': selectorPresentation.fontWeight,
+    '--native-line-height': selectorPresentation.lineHeight,
+    '--native-shadow': selectorPresentation.boxShadow,
+  } as CSSProperties
 
   if (!open) {
     return (
-      <main className="overlay-closed" {...dragHandlers}>
-        <div className="drag-handle">
-          <GripVertical size={15} />
-        </div>
-        <button className={`native-trigger tone-${selectedVisual.tone}`} type="button" onClick={() => void toggle()} disabled={!selectedModelName}>
-          <strong>{selectedModelName}</strong>
-          <span>{efforts[selection.effortIndex] ?? ''}</span>
-          <ChevronDown size={15} />
+      <main className="overlay-closed" style={selectorStyle} onContextMenu={showContextMenu}>
+        <button
+          className={`native-trigger${selectedToneClass}`}
+          type="button"
+          onClick={() => selectedModelName ? void toggle() : void enableSilentMode()}
+          disabled={activating}
+          aria-label={displaySelectedModelName
+            ? `${displaySelectedModelName} ${selectedEffort}`
+            : activating ? `${uiStrings.restartingCodex}…` : uiStrings.enableSilentMode}
+        >
+          {!selectedModelName ? (
+            <>
+              <span className="native-model">
+                {activating ? `${uiStrings.restartingCodex}…` : uiStrings.enableSilentMode}
+              </span>
+              {activationError ? <span className="native-effort">{activationError}</span> : null}
+              <ChevronDown aria-hidden="true" size={selectorPresentation.iconSize} />
+            </>
+          ) : null}
         </button>
       </main>
     )
   }
 
   return (
-    <main className="overlay-open" {...dragHandlers}>
+    <main className="overlay-open" style={selectorStyle} onContextMenu={showContextMenu}>
       <section className="palette-card" aria-label="Codex model palette">
-        <header className="palette-header">
+        <header className="palette-header" {...dragHandlers}>
           <div className="header-actions">
             <button type="button" onClick={() => void resetPosition()} aria-label="Reset position">
               <RotateCcw size={14} />
@@ -252,7 +348,7 @@ export default function App() {
             return (
             <div className={`model-heading tone-${tone}`} key={name}>
               <Icon size={16} />
-              <span>{name}</span>
+              <span>{compactModelName(name)}</span>
             </div>
           )})}
 
@@ -269,7 +365,7 @@ export default function App() {
                     type="button"
                     key={`${modelName}-${effort}`}
                     disabled={!supported || busy}
-                    aria-label={`${modelName}, ${effort}`}
+                    aria-label={`${compactModelName(modelName)}, ${effort}`}
                     aria-pressed={selected}
                     style={{ '--level': effortIndex + 1 } as React.CSSProperties}
                     onClick={() => void apply({ modelIndex, effortIndex })}
@@ -310,13 +406,12 @@ export default function App() {
       </section>
 
       <div className="open-trigger-row">
-        <div className="drag-handle open-grip">
-          <GripVertical size={15} />
-        </div>
-        <button className={`native-trigger tone-${selectedVisual.tone}`} type="button" onClick={() => void toggle()}>
-          <strong>{selectedModelName}</strong>
-          <span>{efforts[selection.effortIndex] ?? ''}</span>
-          <ChevronDown size={15} />
+        <button
+          className={`native-trigger${selectedToneClass}`}
+          type="button"
+          aria-label={`${displaySelectedModelName} ${selectedEffort}`}
+          onClick={() => void toggle()}
+        >
         </button>
       </div>
     </main>

@@ -1,15 +1,47 @@
-import { app, BrowserWindow, ipcMain, screen } from 'electron'
+import { app, BrowserWindow, globalShortcut, ipcMain, Menu, screen } from 'electron'
 import { execFile, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { promisify } from 'node:util'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { readFile, writeFile } from 'node:fs/promises'
+import {
+  applySelectionThroughCodexRenderer,
+  applySpeedThroughCodexRenderer,
+  getCurrentSelectionThroughCodexRenderer,
+  getLocalizedUiStringsThroughCodexRenderer,
+  getModelCatalogThroughCodexRenderer,
+  getSelectorPresentationThroughCodexRenderer,
+  getSelectorShortcutThroughCodexRenderer,
+  type CodexCurrentSelection,
+  type CodexSelectorPresentation,
+} from './codex-cdp'
+import { openBoundsForAnchor, selectorBoundsToDipRectangle } from './overlay-position'
+import { labelsFromModelCatalog } from './model-catalog'
 
 const execFileAsync = promisify(execFile)
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const APP_ROOT = join(__dirname, '..')
-const CLOSED_SIZE = { width: 212, height: 50 }
-const OPEN_SIZE = { width: 680, height: 360 }
+const FALLBACK_CLOSED_SIZE = { width: 136, height: 28 }
+const PALETTE_SIZE = { width: 640, height: 306 }
+const DEFAULT_PALETTE_SHORTCUT = 'Ctrl+Shift+M'
+const FALLBACK_SELECTOR_PRESENTATION: CodexSelectorPresentation = {
+  ...FALLBACK_CLOSED_SIZE,
+  paddingLeft: '8px',
+  paddingRight: '8px',
+  gap: '4px',
+  border: '1px solid rgba(0, 0, 0, 0)',
+  borderRadius: '9999px',
+  backgroundColor: 'rgba(0, 0, 0, 0)',
+  hoverBackgroundColor: 'rgba(26, 28, 31, 0.053)',
+  color: 'rgba(26, 28, 31, 0.494)',
+  modelColor: 'rgb(26, 28, 31)',
+  fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+  fontSize: '13px',
+  fontWeight: '400',
+  lineHeight: '18px',
+  boxShadow: 'none',
+  iconSize: 14,
+}
 type Point = { x: number; y: number }
 type NativeLabels = {
   models: string[]
@@ -18,6 +50,12 @@ type NativeLabels = {
   speedLabel: string
   speeds: string[]
   speedIndex: number
+  uiStrings?: { enableSilentMode: string; restartingCodex: string }
+}
+type NativeSelection = {
+  modelIndex: number
+  effortIndex: number
+  speedIndex: number
 }
 
 let mainWindow: BrowserWindow | null = null
@@ -25,6 +63,7 @@ let paletteOpen = false
 let applying = false
 let draggingWindow = false
 let watcher: ChildProcessWithoutNullStreams | null = null
+let closedSize = { ...FALLBACK_CLOSED_SIZE }
 let anchor = { x: 951, y: 756 }
 let selectorAnchor: Point | null = null
 let manualOffset: Point | null = null
@@ -36,6 +75,17 @@ let nativeLabels: NativeLabels = {
   speeds: [],
   speedIndex: -1,
 }
+let nativeLabelsLoad: Promise<void> | null = null
+let nativeLabelsComplete = false
+let nativeLabelsRetryAfter = 0
+let fastServiceTierId: string | null = null
+let nativeSelectorPresentation = { ...FALLBACK_SELECTOR_PRESENTATION }
+let nativeSelection: NativeSelection | null = null
+let lastObservedSelectorName = ''
+let selectionSyncRevision = 0
+let codexVisible = false
+let paletteShortcut = DEFAULT_PALETTE_SHORTCUT
+let registeredPaletteShortcut = ''
 
 const helperPath = () =>
   app.isPackaged
@@ -44,7 +94,185 @@ const helperPath = () =>
 
 const positionPath = () => join(app.getPath('userData'), 'overlay-position.json')
 
-async function loadNativeLabels() {
+function setNativeLabels(result: Partial<NativeLabels>) {
+  if (!Array.isArray(result.models) || result.models.length === 0 || !Array.isArray(result.efforts) || result.efforts.length === 0) {
+    return false
+  }
+  nativeLabels = {
+    models: result.models.map(String),
+    efforts: result.efforts.map(String),
+    supportedEfforts: Array.isArray(result.supportedEfforts)
+      ? result.supportedEfforts.map((indices) => Array.isArray(indices) ? indices.map(Number) : [])
+      : [],
+    speedLabel: typeof result.speedLabel === 'string' ? result.speedLabel : '',
+    speeds: Array.isArray(result.speeds) ? result.speeds.map(String).slice(0, 2) : [],
+    speedIndex: Number.isInteger(result.speedIndex) ? Number(result.speedIndex) : -1,
+    uiStrings: result.uiStrings,
+  }
+  return true
+}
+
+function selectorPresentationForRenderer(): CodexSelectorPresentation {
+  return { ...nativeSelectorPresentation, ...closedSize }
+}
+
+function broadcastSelectorPresentation() {
+  if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return
+  mainWindow.webContents.send('overlay:selector-presentation', selectorPresentationForRenderer())
+}
+
+function unregisterPaletteShortcut() {
+  if (!registeredPaletteShortcut) return
+  globalShortcut.unregister(registeredPaletteShortcut)
+  registeredPaletteShortcut = ''
+}
+
+function syncPaletteShortcutRegistration() {
+  unregisterPaletteShortcut()
+  if (!codexVisible || !paletteShortcut) return
+  const registered = globalShortcut.register(paletteShortcut, () => {
+    if (!mainWindow || mainWindow.isDestroyed() || !mainWindow.isVisible()) return
+    setPaletteOpen(!paletteOpen)
+  })
+  if (registered) registeredPaletteShortcut = paletteShortcut
+  else console.warn(`[codex-palette] Shortcut unavailable: ${paletteShortcut}`)
+}
+
+function setPaletteShortcut(shortcut: string) {
+  const next = shortcut.trim() || DEFAULT_PALETTE_SHORTCUT
+  if (next === paletteShortcut && registeredPaletteShortcut) return
+  paletteShortcut = next
+  syncPaletteShortcutRegistration()
+}
+
+function setCodexVisible(visible: boolean) {
+  if (codexVisible === visible) return
+  codexVisible = visible
+  syncPaletteShortcutRegistration()
+}
+
+function normalizeModelLabel(value: string) {
+  return value
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/^gpt[\s-]*/i, '')
+    .replace(/[^a-z0-9]+/gi, ' ')
+    .trim()
+    .toLowerCase()
+}
+
+function setNativeSelectionFromCodex(observed: CodexCurrentSelection) {
+  const observedLabel = normalizeModelLabel(observed.modelLabel)
+  const matchedModelIndex = nativeLabels.models.findIndex(
+    (model) => normalizeModelLabel(model) === observedLabel,
+  )
+  const modelIndex = matchedModelIndex >= 0 ? matchedModelIndex : observed.modelIndex
+  if (
+    !Number.isInteger(modelIndex)
+    || modelIndex < 0
+    || (nativeLabels.models.length > 0 && modelIndex >= nativeLabels.models.length)
+    || !Number.isInteger(observed.effortIndex)
+    || observed.effortIndex < 0
+  ) return
+
+  const speedIndex = observed.speedIndex >= 0 ? observed.speedIndex : nativeLabels.speedIndex
+  const next = { modelIndex, effortIndex: observed.effortIndex, speedIndex }
+  const changed = !nativeSelection
+    || nativeSelection.modelIndex !== next.modelIndex
+    || nativeSelection.effortIndex !== next.effortIndex
+    || nativeSelection.speedIndex !== next.speedIndex
+  nativeSelection = next
+  if (speedIndex >= 0) nativeLabels.speedIndex = speedIndex
+  if (!changed || !mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return
+  mainWindow.webContents.send('overlay:selection-changed', next)
+}
+
+async function syncNativeSelection() {
+  const revision = ++selectionSyncRevision
+  try {
+    const cdpPort = await getCodexCdpPort()
+    if (!cdpPort) return
+    const observed = await getCurrentSelectionThroughCodexRenderer(cdpPort)
+    if (revision !== selectionSyncRevision) return
+    setNativeSelectionFromCodex(observed)
+  } catch {
+    // The next UI Automation state change will retry without opening the native menu.
+  }
+}
+
+async function readNativeLabels() {
+  const { stdout } = await execFileAsync(
+    'powershell.exe',
+    [
+      '-NoProfile',
+      '-NonInteractive',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-File',
+      helperPath(),
+      '-Mode',
+      'labels-fast',
+    ],
+    { windowsHide: true, timeout: 15_000 },
+  )
+  return JSON.parse(stdout.trim()) as Partial<NativeLabels>
+}
+
+function loadNativeLabels() {
+  if (nativeLabelsComplete) return Promise.resolve()
+  if (nativeLabelsLoad) return nativeLabelsLoad
+  if (Date.now() < nativeLabelsRetryAfter) return Promise.resolve()
+
+  nativeLabelsLoad = (async () => {
+    try {
+      const cdpPort = await getCodexCdpPort()
+      if (cdpPort) {
+        const catalog = await getModelCatalogThroughCodexRenderer(cdpPort)
+        fastServiceTierId = catalog.flatMap((model) => model.serviceTiers).find((tier) => tier.id)?.id ?? null
+        const [uiStrings, selectorPresentation, currentSelection, selectorShortcut] = await Promise.all([
+          getLocalizedUiStringsThroughCodexRenderer(cdpPort),
+          getSelectorPresentationThroughCodexRenderer(cdpPort).catch(() => null),
+          getCurrentSelectionThroughCodexRenderer(cdpPort).catch(() => null),
+          getSelectorShortcutThroughCodexRenderer(cdpPort).catch(() => DEFAULT_PALETTE_SHORTCUT),
+        ])
+        setPaletteShortcut(selectorShortcut)
+        if (selectorPresentation) {
+          nativeSelectorPresentation = selectorPresentation
+          if (!selectorAnchor) {
+            closedSize = {
+              width: Math.max(60, Math.round(selectorPresentation.width)),
+              height: Math.max(20, Math.round(selectorPresentation.height)),
+            }
+          }
+          broadcastSelectorPresentation()
+        }
+        if (setNativeLabels({ ...labelsFromModelCatalog(catalog, app.getLocale()), uiStrings })) {
+          if (currentSelection) setNativeSelectionFromCodex(currentSelection)
+          nativeLabelsComplete = true
+          startWatcher()
+          return
+        }
+      }
+      if (process.env.CODEX_UIA_SCAN_FALLBACK === '1' && setNativeLabels(await readNativeLabels())) {
+        nativeLabelsComplete = true
+        startWatcher()
+        return
+      }
+      nativeLabelsRetryAfter = Date.now() + 5_000
+    } catch {
+      // Retry the renderer harness later without touching the native menu.
+      nativeLabelsRetryAfter = Date.now() + 5_000
+    }
+  })().finally(() => {
+    nativeLabelsLoad = null
+  })
+
+  return nativeLabelsLoad
+}
+
+async function getCodexCdpPort() {
+  const configured = Number(process.env.CODEX_CDP_PORT)
+  if (Number.isInteger(configured) && configured > 0 && configured <= 65_535) return configured
   try {
     const { stdout } = await execFileAsync(
       'powershell.exe',
@@ -56,33 +284,22 @@ async function loadNativeLabels() {
         '-File',
         helperPath(),
         '-Mode',
-        'labels',
+        'cdp',
       ],
-      { windowsHide: true, timeout: 12_000 },
+      { windowsHide: true, timeout: 5_000 },
     )
-    const result = JSON.parse(stdout.trim()) as Partial<NativeLabels>
-    if (Array.isArray(result.models) && result.models.length > 0 && Array.isArray(result.efforts) && result.efforts.length > 0) {
-      nativeLabels = {
-        models: result.models.map(String),
-        efforts: result.efforts.map(String),
-        supportedEfforts: Array.isArray(result.supportedEfforts)
-          ? result.supportedEfforts.map((indices) => Array.isArray(indices) ? indices.map(Number) : [])
-          : [],
-        speedLabel: typeof result.speedLabel === 'string' ? result.speedLabel : '',
-        speeds: Array.isArray(result.speeds) ? result.speeds.map(String).slice(0, 2) : [],
-        speedIndex: Number.isInteger(result.speedIndex) ? Number(result.speedIndex) : -1,
-      }
-    }
+    const result = JSON.parse(stdout.trim()) as { ok?: boolean; port?: number | null }
+    return result.ok && Number.isInteger(result.port) ? result.port as number : null
   } catch {
-    // Keep labels empty until the native Codex controls are available.
+    return null
   }
 }
 
 function defaultAnchor() {
   const { workArea } = screen.getPrimaryDisplay()
   return {
-    x: workArea.x + Math.floor((workArea.width - CLOSED_SIZE.width) / 2),
-    y: workArea.y + Math.floor((workArea.height - CLOSED_SIZE.height) / 2),
+    x: workArea.x + Math.floor((workArea.width - closedSize.width) / 2),
+    y: workArea.y + Math.floor((workArea.height - closedSize.height) / 2),
   }
 }
 
@@ -115,12 +332,14 @@ async function saveAnchor() {
 }
 
 function boundsFor(open: boolean) {
-  if (!open) return { ...anchor, ...CLOSED_SIZE }
-  return {
-    x: anchor.x - (OPEN_SIZE.width - CLOSED_SIZE.width),
-    y: anchor.y - (OPEN_SIZE.height - CLOSED_SIZE.height),
-    ...OPEN_SIZE,
-  }
+  if (!open) return { ...anchor, ...closedSize }
+  const { workArea } = screen.getDisplayNearestPoint(anchor)
+  return openBoundsForAnchor(
+    anchor,
+    closedSize,
+    { width: PALETTE_SIZE.width, height: PALETTE_SIZE.height + closedSize.height },
+    workArea,
+  )
 }
 
 function setPaletteOpen(open: boolean) {
@@ -130,8 +349,13 @@ function setPaletteOpen(open: boolean) {
     anchor = { x, y }
     void saveAnchor()
   }
+  if (!open && selectorAnchor) {
+    anchor = selectorAnchor
+    manualOffset = null
+  }
   paletteOpen = open
   mainWindow.setBounds(boundsFor(open), true)
+  if (!mainWindow.webContents.isDestroyed()) mainWindow.webContents.send('overlay:open-changed', open)
 }
 
 function createWindow() {
@@ -139,6 +363,7 @@ function createWindow() {
     ...boundsFor(false),
     transparent: true,
     frame: false,
+    thickFrame: false,
     resizable: false,
     maximizable: false,
     minimizable: false,
@@ -187,6 +412,8 @@ function startWatcher() {
       'watch',
       '-OverlayPid',
       String(process.pid),
+      '-ModelNamesJson',
+      JSON.stringify(nativeLabels.models),
     ],
     { windowsHide: true },
   )
@@ -198,29 +425,40 @@ function startWatcher() {
     const lines = buffer.split(/\r?\n/)
     buffer = lines.pop() ?? ''
     for (const line of lines) {
-      if (!line.trim() || !mainWindow || mainWindow.isDestroyed() || applying) continue
+      if (!line.trim() || !mainWindow || mainWindow.isDestroyed()) continue
       try {
         const state = JSON.parse(line) as {
           visible: boolean
-          selector?: { x: number; y: number; width: number; height: number } | null
+          selector?: { x: number; y: number; width: number; height: number; name?: string } | null
         }
         if (state.selector) {
-          selectorAnchor = {
-            x: Math.round(state.selector.x + state.selector.width / 2 - 119),
-            y: Math.round(state.selector.y + state.selector.height / 2 - 25),
+          const selectorName = state.selector.name?.trim() ?? ''
+          if (selectorName && selectorName !== lastObservedSelectorName) {
+            lastObservedSelectorName = selectorName
+            void syncNativeSelection()
           }
+          const selectorBounds = selectorBoundsToDipRectangle(
+            state.selector,
+            (point) => screen.screenToDipPoint(point),
+          )
+          const nextClosedSize = {
+            width: Math.max(60, Math.min(320, selectorBounds.width)),
+            height: Math.max(20, Math.min(50, selectorBounds.height)),
+          }
+          const sizeChanged = nextClosedSize.width !== closedSize.width || nextClosedSize.height !== closedSize.height
+          closedSize = nextClosedSize
+          selectorAnchor = { x: selectorBounds.x, y: selectorBounds.y }
+          manualOffset = null
+          if (sizeChanged) broadcastSelectorPresentation()
           if (!draggingWindow) {
-            const offset = manualOffset ?? { x: 0, y: 0 }
-            const nextAnchor = {
-              x: selectorAnchor.x + offset.x,
-              y: selectorAnchor.y + offset.y,
-            }
-            if (nextAnchor.x !== anchor.x || nextAnchor.y !== anchor.y) {
-              anchor = nextAnchor
+            const anchorChanged = selectorAnchor.x !== anchor.x || selectorAnchor.y !== anchor.y
+            if (anchorChanged || sizeChanged) {
+              anchor = selectorAnchor
               mainWindow.setBounds(boundsFor(paletteOpen), false)
             }
           }
         }
+        setCodexVisible(state.visible)
         if (state.visible) {
           mainWindow.showInactive()
           mainWindow.moveTop()
@@ -234,13 +472,42 @@ function startWatcher() {
 }
 
 ipcMain.handle('overlay:set-open', (_event, open: boolean) => setPaletteOpen(open))
-ipcMain.handle('overlay:get-labels', async () => {
+ipcMain.on('overlay:show-context-menu', () => {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  Menu.buildFromTemplate([
+    { label: 'Fermer la palette', click: () => app.quit() },
+  ]).popup({ window: mainWindow })
+})
+ipcMain.handle('overlay:enable-silent-mode', async () => {
+  const { stdout } = await execFileAsync(
+    'powershell.exe',
+    ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', helperPath(), '-Mode', 'enable-cdp'],
+    { windowsHide: true, timeout: 20_000 },
+  )
+  const result = JSON.parse(stdout.trim()) as { ok?: boolean; port?: number }
+  if (!result.ok || !Number.isInteger(result.port)) throw new Error('Codex could not be restarted in silent mode.')
+  nativeLabelsComplete = false
+  nativeLabelsRetryAfter = 0
+  fastServiceTierId = null
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    if (await getCodexCdpPort()) break
+    await new Promise((resolve) => setTimeout(resolve, 500))
+  }
   await loadNativeLabels()
-  return nativeLabels
+  return { ok: true, port: result.port }
+})
+ipcMain.handle('overlay:get-labels', () => {
+  void loadNativeLabels()
+  return {
+    ...nativeLabels,
+    currentSelection: nativeSelection,
+    complete: nativeLabelsComplete,
+    selectorPresentation: selectorPresentationForRenderer(),
+  }
 })
 ipcMain.handle('overlay:begin-drag', () => {
   draggingWindow = true
-  if (!mainWindow || mainWindow.isDestroyed()) throw new Error('La surcouche n’est pas prête.')
+  if (!mainWindow || mainWindow.isDestroyed()) throw new Error('The overlay is not ready.')
   const [x, y] = mainWindow.getPosition()
   return { x, y }
 })
@@ -252,10 +519,11 @@ ipcMain.on('overlay:drag-to', (_event, position: { x: number; y: number }) => {
 ipcMain.handle('overlay:end-drag', async () => {
   if (!mainWindow || mainWindow.isDestroyed()) return
   const [x, y] = mainWindow.getPosition()
+  const openSize = { width: PALETTE_SIZE.width, height: PALETTE_SIZE.height + closedSize.height }
   anchor = paletteOpen
     ? {
-        x: x + (OPEN_SIZE.width - CLOSED_SIZE.width),
-        y: y + (OPEN_SIZE.height - CLOSED_SIZE.height),
+        x: x + (openSize.width - closedSize.width),
+        y: y + (openSize.height - closedSize.height),
       }
     : { x, y }
   draggingWindow = false
@@ -275,10 +543,19 @@ ipcMain.handle('overlay:reset-position', async () => {
 })
 ipcMain.handle('overlay:apply-speed', async (_event, speedIndex: number) => {
   if (!Number.isInteger(speedIndex) || speedIndex < 0 || speedIndex > 1) {
-    throw new Error('La vitesse demandée est invalide.')
+    throw new Error('The requested speed is invalid.')
   }
   applying = true
   try {
+    const cdpPort = await getCodexCdpPort()
+    if (cdpPort && fastServiceTierId) {
+      const result = await applySpeedThroughCodexRenderer(cdpPort, speedIndex, fastServiceTierId)
+      nativeLabels.speedIndex = speedIndex
+      return result
+    }
+    if (process.env.CODEX_UIA_MODIFIER_FALLBACK !== '1') {
+      throw new Error('Codex silent integration is unavailable.')
+    }
     const { stdout } = await execFileAsync(
       'powershell.exe',
       [
@@ -304,7 +581,7 @@ ipcMain.handle('overlay:apply-speed', async (_event, speedIndex: number) => {
         ? String((error as { stderr?: unknown }).stderr ?? '')
         : ''
     const firstLine = stderr.split(/\r?\n/).find((line) => line.trim())?.trim()
-    throw new Error(firstLine || 'Codex n’a pas confirmé la vitesse demandée.')
+    throw new Error(firstLine || 'Codex did not confirm the requested speed.')
   } finally {
     applying = false
   }
@@ -313,11 +590,27 @@ ipcMain.handle('overlay:apply-speed', async (_event, speedIndex: number) => {
 ipcMain.handle(
   'overlay:apply',
   async (_event, selection: { modelIndex: number; effortIndex: number }) => {
-    if (!mainWindow) throw new Error('La surcouche n’est pas prête.')
+    if (!mainWindow) throw new Error('The overlay is not ready.')
     applying = true
-    // Keep the overlay visible while UI Automation runs. Native menus can open
-    // underneath it, so the operation does not cause cursor or focus flicker.
+    // Keep the overlay stable while Codex's native selector callback settles.
     try {
+      const cdpPort = await getCodexCdpPort()
+      const modelLabel = nativeLabels.models[selection.modelIndex]
+      if (cdpPort && modelLabel) {
+        try {
+          return await applySelectionThroughCodexRenderer(cdpPort, {
+            modelLabel,
+            modelIndex: selection.modelIndex,
+            effortIndex: selection.effortIndex,
+          })
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error)
+          console.warn(`[codex-palette] Internal CDP selection unavailable: ${message}`)
+        }
+      }
+      if (process.env.CODEX_UIA_MODIFIER_FALLBACK !== '1') {
+        throw new Error('Codex silent integration is unavailable.')
+      }
       const { stdout } = await execFileAsync(
         'powershell.exe',
         [
@@ -343,7 +636,7 @@ ipcMain.handle(
           ? String((error as { stderr?: unknown }).stderr ?? '')
           : ''
       const firstLine = stderr.split(/\r?\n/).find((line) => line.trim())?.trim()
-      throw new Error(firstLine || 'Codex n’a pas confirmé la sélection demandée.')
+      throw new Error(firstLine || 'Codex did not confirm the requested selection.')
     } finally {
       applying = false
     }
@@ -353,10 +646,13 @@ ipcMain.handle('overlay:quit', () => app.quit())
 
 app.whenReady().then(async () => {
   await loadAnchor()
-  await loadNativeLabels()
   createWindow()
   startWatcher()
+  void loadNativeLabels()
 })
 
-app.on('before-quit', () => watcher?.kill())
+app.on('before-quit', () => {
+  unregisterPaletteShortcut()
+  watcher?.kill()
+})
 app.on('window-all-closed', () => app.quit())

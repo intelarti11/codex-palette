@@ -1,15 +1,15 @@
 param(
-  [ValidateSet('watch', 'apply', 'labels', 'speed')][string]$Mode,
+  [ValidateSet('watch', 'apply', 'labels-fast', 'labels', 'speed', 'cdp', 'enable-cdp')][string]$Mode,
   [int]$OverlayPid = 0,
   [int]$ModelIndex = 0,
   [int]$EffortIndex = 0,
-  [int]$SpeedIndex = -1
+  [int]$SpeedIndex = -1,
+  [string]$ModelNamesJson = '[]'
 )
 
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 $OutputEncoding = [Console]::OutputEncoding
-$script:ModelNames = @('5.6 Sol', '5.6 Terra', '5.6 Luna', '5.5', '5.4', '5.4 Mini')
 
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
@@ -26,6 +26,52 @@ function Get-Codex {
   Get-Process -Name ChatGPT -ErrorAction SilentlyContinue |
     Where-Object { $_.MainWindowHandle -ne 0 -and $_.Path -like '*OpenAI.Codex_*' } |
     Select-Object -First 1
+}
+
+if ($Mode -eq 'cdp') {
+  $candidate = Get-CimInstance Win32_Process -Filter "Name = 'ChatGPT.exe'" |
+    Where-Object { $_.CommandLine -notmatch '--type=' -and $_.ExecutablePath -like '*OpenAI.Codex_*' } |
+    Select-Object -First 1
+  $match = if ($candidate) {
+    [Regex]::Match([string]$candidate.CommandLine, '--remote-debugging-port(?:=|\s+)(\d+)')
+  } else {
+    $null
+  }
+  $port = if ($match -and $match.Success) { [int]$match.Groups[1].Value } else { $null }
+  @{ ok = $null -ne $port; port = $port } | ConvertTo-Json -Compress
+  exit 0
+}
+
+if ($Mode -eq 'enable-cdp') {
+  $debugProcess = Get-CimInstance Win32_Process -Filter "Name = 'ChatGPT.exe'" |
+    Where-Object { $_.CommandLine -notmatch '--type=' -and $_.ExecutablePath -like '*OpenAI.Codex_*' -and $_.CommandLine -match '--remote-debugging-port(?:=|\s+)(\d+)' } |
+    Select-Object -First 1
+  if ($debugProcess) {
+    $match = [Regex]::Match([string]$debugProcess.CommandLine, '--remote-debugging-port(?:=|\s+)(\d+)')
+    @{ ok = $true; port = [int]$match.Groups[1].Value; reused = $true } | ConvertTo-Json -Compress
+    exit 0
+  }
+  $codex = Get-Codex
+  if ($codex) {
+    $null = $codex.CloseMainWindow()
+    try { Wait-Process -Id $codex.Id -Timeout 6 -ErrorAction Stop } catch {
+      Get-Process -Name ChatGPT -ErrorAction SilentlyContinue |
+        Where-Object { $_.Path -like '*OpenAI.Codex_*' } |
+        Stop-Process -Force
+      Start-Sleep -Seconds 2
+    }
+  }
+  $package = Get-AppxPackage OpenAI.Codex | Select-Object -First 1
+  if (-not $package) { throw 'The official Codex package could not be found.' }
+  $executable = Join-Path $package.InstallLocation 'app\ChatGPT.exe'
+  if (-not (Test-Path $executable)) { throw 'The official Codex executable could not be found.' }
+  $port = Get-Random -Minimum 41000 -Maximum 49000
+  Start-Process $executable -ArgumentList @(
+    '--remote-debugging-address=127.0.0.1',
+    "--remote-debugging-port=$port"
+  )
+  @{ ok = $true; port = $port } | ConvertTo-Json -Compress
+  exit 0
 }
 
 function Get-Pattern($Element, $Pattern) {
@@ -129,14 +175,7 @@ function Get-Label($Element, [switch]$Effort) {
   return Normalize $value -Effort:$Effort
 }
 
-function Get-Context([int]$ProcessId) {
-  $selector = Find-Element $ProcessId ([System.Windows.Automation.ControlType]::Button) '^5\.(6 (Sol|Terra|Luna)|5|4( Mini)?)\s'
-  $name = Normalize $selector.Current.Name
-  $model = $script:ModelNames | Where-Object { $name.StartsWith($_ + ' ') } | Select-Object -First 1
-  if (-not $model) { throw 'The current model could not be identified.' }
-  $effort = $name.Substring($model.Length).Trim()
-  Open-Silent $selector
-
+function Get-ExpandableMenuItems([int]$ProcessId) {
   $submenus = @()
   foreach ($item in @(Get-Elements $ProcessId ([System.Windows.Automation.ControlType]::MenuItem))) {
     if (-not (Test-Visible $item)) { continue }
@@ -145,12 +184,63 @@ function Get-Context([int]$ProcessId) {
       $submenus += $item
     }
   }
+  return @($submenus)
+}
 
-  $modelMenu = $submenus | Where-Object { (Normalize $_.Current.Name) -match [Regex]::Escape($model) } | Select-Object -First 1
-  $effortMenu = $submenus | Where-Object {
-    $_ -ne $modelMenu -and (Normalize $_.Current.Name) -match ([Regex]::Escape($effort) + '$')
-  } | Select-Object -First 1
-  if (-not $modelMenu -or -not $effortMenu) { throw 'The native model or reasoning submenu is not exposed.' }
+function Find-Selector([int]$ProcessId) {
+  $candidates = @()
+  foreach ($button in @(Get-Elements $ProcessId ([System.Windows.Automation.ControlType]::Button))) {
+    if (-not (Test-Visible $button)) { continue }
+    $pattern = Get-Pattern $button ([System.Windows.Automation.ExpandCollapsePattern]::Pattern)
+    if (-not $pattern -or ([System.Windows.Automation.ExpandCollapsePattern]$pattern).Current.ExpandCollapseState -eq [System.Windows.Automation.ExpandCollapseState]::LeafNode) { continue }
+    $rect = $button.Current.BoundingRectangle
+    $name = Normalize $button.Current.Name
+    $score = $rect.Y
+    if ($name -match '^\d+(?:\.\d+)+(?:\s|$)') { $score += 100000 }
+    $candidates += [pscustomobject]@{ button = $button; score = $score }
+  }
+
+  foreach ($candidate in @($candidates | Sort-Object score -Descending)) {
+    try {
+      Open-Silent $candidate.button
+      $submenus = @(Get-ExpandableMenuItems $ProcessId)
+      $name = Normalize $candidate.button.Current.Name
+      if ($submenus.Count -ge 2 -or ($submenus.Count -ge 1 -and $name -match '^\d+(?:\.\d+)+(?:\s|$)')) { return $candidate.button }
+      Close-Silent $candidate.button
+    } catch { try { Close-Silent $candidate.button } catch {} }
+  }
+  throw 'The native model selector could not be discovered.'
+}
+
+function Get-Context([int]$ProcessId, $KnownSelector = $null) {
+  $selector = if ($KnownSelector) { $KnownSelector } else { Find-Selector $ProcessId }
+  $name = Normalize $selector.Current.Name
+  Open-Silent $selector
+  $submenus = @(Get-ExpandableMenuItems $ProcessId)
+  $model = ''; $effort = ''; $modelMenu = $null; $effortMenu = $null
+
+  for ($pass = 0; $pass -lt 2 -and (-not $modelMenu -or -not $effortMenu); $pass++) {
+    foreach ($submenu in $submenus) {
+      $label = Get-Label $submenu
+      if (-not $label) { continue }
+      $words = @($label -split ' ')
+      for ($start = 0; $start -lt $words.Count; $start++) {
+        $value = ($words[$start..($words.Count - 1)] -join ' ')
+        if (-not $modelMenu -and $name.StartsWith($value + ' ')) { $model = $value; $modelMenu = $submenu }
+        if (-not $effortMenu -and $name.EndsWith(' ' + $value)) { $effort = $value; $effortMenu = $submenu }
+      }
+    }
+    if ($modelMenu -and $effortMenu) { break }
+    $namedSubmenus = @($submenus | Where-Object { $_.Current.Name })
+    if ($pass -eq 0 -and $namedSubmenus.Count -eq 1) {
+      Open-Silent $namedSubmenus[0]
+      $submenus = @(Get-ExpandableMenuItems $ProcessId)
+    } else { break }
+  }
+  if (-not $modelMenu -or -not $effortMenu) {
+    Close-Silent $selector
+    throw 'The native model or reasoning submenu is not exposed.'
+  }
 
   return [pscustomobject]@{
     selector = $selector; model = $model; effort = $effort
@@ -264,36 +354,80 @@ function Get-Speed([int]$ProcessId, $Context) {
   throw 'The native two-position speed selector is not exposed.'
 }
 
-function Get-SelectorBounds($Process) {
+function Find-ClosedSelector($Process, [string[]]$KnownModels = @()) {
   try {
-    $root = [System.Windows.Automation.AutomationElement]::FromHandle($Process.MainWindowHandle)
-    $condition = [System.Windows.Automation.PropertyCondition]::new(
-      [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
-      [System.Windows.Automation.ControlType]::Button
-    )
-    $buttons = $root.FindAll([System.Windows.Automation.TreeScope]::Descendants, $condition)
-    for ($i = 0; $i -lt $buttons.Count; $i++) {
-      $button = $buttons.Item($i)
-      if ($button.Current.Name -notmatch '^5\.(6 (Sol|Terra|Luna)|5|4( Mini)?)\s') { continue }
-      $rect = $button.Current.BoundingRectangle
-      if ($rect.IsEmpty) { return $null }
-      return @{ x = [int]$rect.X; y = [int]$rect.Y; width = [int]$rect.Width; height = [int]$rect.Height }
+    $selectorCandidates = @()
+    foreach ($candidate in @(Get-Elements $Process.Id ([System.Windows.Automation.ControlType]::Button))) {
+      if (-not (Test-Visible $candidate)) { continue }
+      $rect = $candidate.Current.BoundingRectangle
+      $candidateName = Normalize $candidate.Current.Name
+      $knownMatch = $KnownModels | Where-Object { $candidateName -eq $_ -or $candidateName.StartsWith($_ + ' ') } | Select-Object -First 1
+      $fallbackMatch = $candidateName -match '^\d+(?:\.\d+)+(?:\s|$)'
+      if (($knownMatch -or $fallbackMatch) -and $rect.Width -ge 60 -and $rect.Width -le 320 -and $rect.Height -ge 20 -and $rect.Height -le 50) {
+        $selectorCandidates += [pscustomobject]@{ button = $candidate; y = $rect.Y; x = $rect.X }
+      }
     }
-  } catch {}
+    return ($selectorCandidates | Sort-Object y, x -Descending | Select-Object -First 1).button
+  } catch { [Console]::Error.WriteLine("Selector discovery unavailable: $($_.Exception.Message)") }
+  return $null
+}
+
+function Get-SelectorBounds($Process, $Selector = $null, [string[]]$KnownModels = @()) {
+  try {
+    $button = if ($Selector) { $Selector } else { Find-ClosedSelector $Process -KnownModels $KnownModels }
+    if (-not $button) { return $null }
+    $rect = $button.Current.BoundingRectangle
+    if ($rect.IsEmpty) { return $null }
+    return @{
+      x = [int]$rect.X
+      y = [int]$rect.Y
+      width = [int]$rect.Width
+      height = [int]$rect.Height
+      name = Normalize $button.Current.Name
+    }
+  } catch { [Console]::Error.WriteLine("Selector bounds unavailable: $($_.Exception.Message)") }
   return $null
 }
 
 if ($Mode -eq 'watch') {
   $previous = ''
+  $knownModels = @()
+  $cachedCodex = $null
+  $cachedProcessId = 0
+  $cachedSelector = $null
+  try { $knownModels = @($ModelNamesJson | ConvertFrom-Json) } catch {}
   while ($true) {
-    $codex = Get-Codex
+    $codex = $cachedCodex
+    try {
+      if ($codex -and $codex.HasExited) { $codex = $null }
+    } catch { $codex = $null }
+    if (-not $codex) {
+      $codex = Get-Codex
+      $cachedCodex = $codex
+    }
+    $selectorBounds = $null
+    if ($codex) {
+      if ($cachedProcessId -ne $codex.Id) {
+        $cachedProcessId = $codex.Id
+        $cachedSelector = $null
+      }
+      if (-not $cachedSelector) { $cachedSelector = Find-ClosedSelector $codex -KnownModels $knownModels }
+      if ($cachedSelector) {
+        $selectorBounds = Get-SelectorBounds $codex -Selector $cachedSelector -KnownModels $knownModels
+        if (-not $selectorBounds) { $cachedSelector = $null }
+      }
+    } else {
+      $cachedCodex = $null
+      $cachedProcessId = 0
+      $cachedSelector = $null
+    }
     $foreground = [CodexOverlayNative]::GetForegroundWindow()
     [uint32]$foregroundPid = 0
     [CodexOverlayNative]::GetWindowThreadProcessId($foreground, [ref]$foregroundPid) | Out-Null
     $state = @{
       found = $null -ne $codex
       visible = $null -ne $codex -and ($foregroundPid -eq $codex.Id -or $foregroundPid -eq $OverlayPid)
-      selector = if ($codex) { Get-SelectorBounds $codex } else { $null }
+      selector = $selectorBounds
     } | ConvertTo-Json -Compress
     if ($state -ne $previous) { [Console]::Out.WriteLine($state); [Console]::Out.Flush(); $previous = $state }
     Start-Sleep -Milliseconds 350
@@ -302,6 +436,25 @@ if ($Mode -eq 'watch') {
 
 $codex = Get-Codex
 if (-not $codex) { throw 'The official Codex window could not be found.' }
+
+if ($Mode -eq 'labels-fast') {
+  $context = $null
+  try {
+    $context = Get-Context $codex.Id
+    $modelOptions = Get-MenuOptions $codex.Id $context.modelMenu 1 20
+    $effortOptions = Get-MenuOptions $codex.Id $context.effortMenu 4 5 -Effort
+  } finally { if ($context) { Close-Silent $context.selector } }
+  @{
+    ok = $true
+    models = @($modelOptions.labels)
+    efforts = @($effortOptions.labels)
+    supportedEfforts = @()
+    speedLabel = ''
+    speeds = @()
+    speedIndex = -1
+  } | ConvertTo-Json -Compress
+  exit 0
+}
 
 if ($Mode -eq 'labels') {
   $context = Get-Context $codex.Id
