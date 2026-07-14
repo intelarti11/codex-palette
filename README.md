@@ -1,109 +1,136 @@
 # Codex Palette Overlay
 
-An unofficial, movable model, reasoning, and speed palette for the official Codex desktop app on Windows.
+[![CI](https://github.com/intelarti11/codex-palette/actions/workflows/ci.yml/badge.svg)](https://github.com/intelarti11/codex-palette/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-Codex Palette Overlay does not replace Codex and does not run a second chat client. It displays a small transparent window above the native model selector and drives the selector through Windows UI Automation.
+An unofficial visual model and reasoning selector for the official Codex desktop app on Windows.
 
-## Features
+Codex Palette Overlay places a compact color matrix over Codex's native model selector. It reads the models, reasoning levels, speed choices, current task selection, selector geometry, visual style, and keyboard shortcut from the running Codex app. Selection changes are sent through the callbacks already wired to the native selector, so native menus remain closed.
 
-- Visual matrix for model and reasoning-effort combinations.
-- Collapses automatically after a confirmed selection, with a manual collapse control.
-- Automatically aligns itself with the native Codex selector.
-- Drag from anywhere on the overlay to keep a custom offset.
-- Uses the model, reasoning, and speed callbacks already wired to Codex's native selector when local CDP is enabled.
-- Falls back to native model and effort menu actions and verifies the final selection.
-- Uses UI Automation patterns only: it never moves the cursor, emits mouse clicks, or forces Codex to the foreground.
-- Reads the model matrix from Codex's renderer harness without opening the native selector.
-- Adds a two-position speed control whose title, values, and selected state come directly from Codex accessibility controls.
-- Appears only while Codex or the overlay is active.
-- Does not read or store OpenAI credentials.
+> [!IMPORTANT]
+> This is an independent community project. It is not affiliated with, endorsed by, or supported by OpenAI.
 
-## Compatibility
+## Highlights
+
+- Visual matrix for every supported model and reasoning-effort combination.
+- Silent model, effort, and speed changes through Codex's existing renderer callbacks.
+- Automatic synchronization with the active Codex task.
+- Exact alignment with the native selector without covering the microphone button.
+- Model-specific color treatment while native selector text and icons remain visible.
+- Uses Codex's configured selector shortcut; the default is `Ctrl+Shift+M`.
+- Right-click menu for closing the palette.
+- Cached Windows UI Automation geometry watcher with no continuous menu scanning.
+- Localized model capabilities and labels read from the running Codex app.
+- No API key, account token, or conversation content is requested or stored.
+
+## Requirements
 
 - Windows 10 or Windows 11
-- The official Codex desktop app
-- Node.js 22 or newer for development
+- The official Codex desktop app for Windows
+- Node.js 22 or newer
+- Git, when installing from source
 
-The direct integration depends on private Codex renderer module names, and the fallback depends on accessibility names exposed by the current Codex desktop UI. A future Codex update may require adjustments.
+The current integration depends on private Codex renderer structures and Windows accessibility information. A future Codex desktop update can require a compatibility update in this project.
 
-## Optional direct renderer mode
-
-Codex must expose a loopback-only Chrome DevTools Protocol port before the palette can call its internal next-turn settings action. Close Codex completely, then relaunch it from PowerShell:
-
-```powershell
-$codex = Get-AppxPackage OpenAI.Codex
-$exe = Join-Path $codex.InstallLocation 'app\ChatGPT.exe'
-$port = Get-Random -Minimum 41000 -Maximum 49000
-Start-Process $exe -ArgumentList @(
-  '--remote-debugging-address=127.0.0.1',
-  "--remote-debugging-port=$port"
-)
-```
-
-The palette discovers the port from the Codex process command line. During development, `CODEX_CDP_PORT` can override discovery. Native-menu scanning is disabled by default so ordinary startup never opens the selector. Set `CODEX_UIA_SCAN_FALLBACK=1` only to opt into the legacy UI Automation scan while troubleshooting a build without renderer access.
-
-Model, reasoning, and speed changes use the renderer's next-turn settings action and do not open native menus. The legacy modifier is disabled by default; set `CODEX_UIA_MODIFIER_FALLBACK=1` only for explicit compatibility testing.
-
-## Install
-
-The current community version is available from the `main` branch. Older installers on the Releases page may not yet include silent selection and the localized speed control.
+## Quick start
 
 ```powershell
 git clone https://github.com/intelarti11/codex-palette.git
 cd codex-palette
 npm install
+.\launch-silent.bat
+```
+
+`launch-silent.bat` performs the complete development launch sequence:
+
+1. Stops palette processes started from the current project directory.
+2. Closes the Codex desktop app.
+3. Restarts Codex with a random loopback-only CDP port.
+4. Starts the palette through Vite and Electron.
+
+Keep the terminal open while using the development build. Run the batch file again after changing Electron main-process or preload code.
+
+## Usage
+
+- Click the native Codex selector area to open the palette.
+- Press the model-selector shortcut to open or close it. The palette reads the shortcut configured by Codex when it starts; the default is `Ctrl+Shift+M`.
+- Select a cell to apply its model and reasoning level. The palette closes after Codex confirms the selection.
+- Use the segmented control at the bottom to switch between standard and fast service tiers when both are available.
+- Drag the palette header to move it temporarily. Use the reset button to return to native alignment.
+- Right-click the palette to access the close command.
+
+The shortcut is registered only while Codex or the palette is in the foreground, so it does not intercept the same key combination in unrelated applications.
+
+## How silent mode works
+
+Codex is launched with a Chrome DevTools Protocol endpoint bound to `127.0.0.1` on a random high port. The palette discovers that port from the Codex process command line and evaluates small, purpose-built expressions inside the Codex renderer.
+
+Those expressions:
+
+- read the visible model catalog and supported reasoning levels;
+- read the selector's current task state and configured shortcut;
+- read the native selector's computed presentation;
+- invoke `onSelectModel` and `onSelectServiceTier`, which are already connected to Codex's selector.
+
+The palette does not guess task identifiers and does not call thread-update APIs directly.
+
+Windows UI Automation remains responsible for locating the selector rectangle and determining whether Codex is visible. The watcher caches the Codex process and selector element, so the full accessibility tree is not scanned every 350 ms.
+
+Legacy menu scanning and modification are disabled by default. They can be enabled explicitly for compatibility testing:
+
+```powershell
+$env:CODEX_UIA_SCAN_FALLBACK = '1'
+$env:CODEX_UIA_MODIFIER_FALLBACK = '1'
 npm run dev
 ```
 
-To build a Windows installer locally:
+## Development
+
+Install dependencies and start the development build:
 
 ```powershell
-npm run dist
+npm install
+npm run dev
 ```
 
-The NSIS installer is written to `release/`. Windows SmartScreen may display a warning because community builds are not code-signed.
-
-## Validate
+Run the automated checks:
 
 ```powershell
 npm test
 npm run build
 ```
 
-## How it works
+Build an unsigned NSIS installer:
 
-```text
-React palette
-    | context-isolated IPC
-Electron transparent window
-    | local CDP when available
-Codex renderer internal settings bus
-    | fallback: Windows UI Automation
-Official Codex model selector / app-server
+```powershell
+npm run dist
 ```
 
-The PowerShell helper locates the official Codex process, reads the selector bounds and localized labels, discovers the native two-position speed selector structurally, invokes the requested native menu entries, and confirms each resulting selection before reporting success.
+The installer is written to `release/`. Windows SmartScreen may warn about community builds because they are not code-signed.
 
 ## Privacy and security
 
-- No API key is requested.
-- No ChatGPT or Codex authentication token is accessed.
-- No conversation content is sent anywhere by this project.
-- The direct path keeps the active task id inside the Codex renderer and returns only the selection result.
-- UI automation is limited to the native model, reasoning, and speed controls.
+- CDP listens on the loopback interface only.
+- A random port is selected for each launch.
+- No OpenAI API key or Codex authentication token is accessed.
+- No conversation text is read, stored, or transmitted by this project.
+- The active task identifier remains inside the Codex renderer.
+- The palette stores only the last visual selection in its own local storage.
 
-## Contributing
+CDP is a powerful local debugging interface. Only run software you trust on the same Windows account while Codex is running with CDP enabled. Closing Codex removes the endpoint.
 
-Issues and pull requests are welcome, especially for accessibility-name changes introduced by new Codex desktop releases.
+## Documentation
 
-## Disclaimer
+- [Architecture](docs/ARCHITECTURE.md)
+- [Troubleshooting](docs/TROUBLESHOOTING.md)
+- [Contributing](CONTRIBUTING.md)
 
-This independent project is not affiliated with, endorsed by, or sponsored by OpenAI. Codex and OpenAI are trademarks of OpenAI.
+## Project status
+
+This project is experimental and Windows-only. The source on `main` is the authoritative community build. Releases may lag behind current source features.
 
 ## License
 
-Apache License 2.0. See [`LICENSE`](LICENSE).
+Apache License 2.0. See [LICENSE](LICENSE).
 
-## Silent selection
-
-This variant does not call `SetCursorPos`, `mouse_event`, `SetForegroundWindow`, or `AttachThreadInput`. It opens and selects the native Codex controls through `ExpandCollapsePattern`, `InvokePattern`, `SelectionItemPattern`, and `LegacyIAccessiblePattern`. If Codex stops exposing a usable accessibility action after an update, the operation fails instead of falling back to physical mouse input.
+Codex and OpenAI are trademarks of OpenAI.
