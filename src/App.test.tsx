@@ -129,6 +129,16 @@ describe('Codex Palette Overlay', () => {
     expect(window.codexOverlay?.setOpen).toHaveBeenLastCalledWith(false)
   })
 
+  it('opens immediately on primary pointer down while the selector is closed', async () => {
+    render(<App />)
+
+    const trigger = await screen.findByRole('button', { name: /5\.6 Sol/ })
+    fireEvent.pointerDown(trigger, { button: 0, pointerId: 1 })
+
+    expect(window.codexOverlay?.setOpen).toHaveBeenLastCalledWith(true)
+    expect(screen.getByRole('button', { name: 'Collapse palette' })).toBeInTheDocument()
+  })
+
   it('uses the same compact model name as the native selector', async () => {
     const bridge = createBridge()
     vi.mocked(bridge.getLabels).mockResolvedValue({

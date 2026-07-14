@@ -1,8 +1,8 @@
-# Codex Palette Overlay
+# Codex Palette
 
 An unofficial, movable model, reasoning, and speed palette for the official Codex desktop app on Windows.
 
-Codex Palette Overlay does not replace Codex and does not run a second chat client. It displays a small transparent window above the native model selector and drives the selector through Windows UI Automation.
+Codex Palette does not replace Codex and does not run a second chat client. It displays a small transparent window above the native model selector and drives the selector through Windows UI Automation.
 
 ## Features
 

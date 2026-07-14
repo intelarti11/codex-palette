@@ -1,8 +1,8 @@
 {
   "name": "codex-palette",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "private": true,
-  "description": "A transparent visual overlay that drives the native Codex model, reasoning, and speed selectors on Windows.",
+  "description": "Codex Palette",
   "author": "intelarti11",
   "license": "Apache-2.0",
   "repository": {
@@ -54,7 +54,7 @@
   },
   "build": {
     "appId": "dev.codexpalette.overlay",
-    "productName": "Codex Palette Overlay",
+    "productName": "Codex Palette",
     "electronDist": "node_modules/electron/dist",
     "files": [
       "dist/**/*",

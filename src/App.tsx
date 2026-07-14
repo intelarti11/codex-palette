@@ -279,6 +279,17 @@ export default function App() {
   const selectedToneClass = selectedModelName ? ` has-model-tone tone-${selectedVisual.tone}` : ''
   const displaySelectedModelName = compactModelName(selectedModelName)
   const selectedEffort = efforts[selection.effortIndex] ?? ''
+  const activateClosedTriggerFromPointer = useCallback((event: PointerEvent<HTMLButtonElement>) => {
+    if (event.button !== 0) return
+    event.preventDefault()
+    if (selectedModelName) void toggle()
+    else void enableSilentMode()
+  }, [enableSilentMode, selectedModelName, toggle])
+  const activateClosedTriggerFromKeyboard = useCallback((event: MouseEvent<HTMLButtonElement>) => {
+    if (event.detail !== 0) return
+    if (selectedModelName) void toggle()
+    else void enableSilentMode()
+  }, [enableSilentMode, selectedModelName, toggle])
   const selectorStyle = {
     '--selector-width': `${selectorPresentation.width}px`,
     '--selector-height': `${selectorPresentation.height}px`,
@@ -304,7 +315,8 @@ export default function App() {
         <button
           className={`native-trigger${selectedToneClass}`}
           type="button"
-          onClick={() => selectedModelName ? void toggle() : void enableSilentMode()}
+          onPointerDown={activateClosedTriggerFromPointer}
+          onClick={activateClosedTriggerFromKeyboard}
           disabled={activating}
           aria-label={displaySelectedModelName
             ? `${displaySelectedModelName} ${selectedEffort}`

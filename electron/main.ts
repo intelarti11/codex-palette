@@ -94,6 +94,26 @@ const helperPath = () =>
 
 const positionPath = () => join(app.getPath('userData'), 'overlay-position.json')
 
+async function stopPreviousPackagedPalettes() {
+  if (!app.isPackaged || process.platform !== 'win32') return
+  const script = [
+    `$currentPid = ${process.pid}`,
+    "$names = @('Codex Palette.exe', 'Codex Palette Overlay.exe')",
+    "$previous = @(Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $currentPid -and $names -contains $_.Name -and ([string]$_.CommandLine) -notmatch '(?:^|\\s)--type=' })",
+    '$previous | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }',
+    'if ($previous.Count) { Start-Sleep -Milliseconds 300 }',
+  ].join('; ')
+  try {
+    await execFileAsync(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script],
+      { windowsHide: true, timeout: 5_000 },
+    )
+  } catch (error) {
+    console.warn('[codex-palette] Previous packaged palette cleanup failed:', error)
+  }
+}
+
 function setNativeLabels(result: Partial<NativeLabels>) {
   if (!Array.isArray(result.models) || result.models.length === 0 || !Array.isArray(result.efforts) || result.efforts.length === 0) {
     return false
@@ -368,6 +388,7 @@ function createWindow() {
     maximizable: false,
     minimizable: false,
     fullscreenable: false,
+    focusable: false,
     skipTaskbar: true,
     alwaysOnTop: true,
     hasShadow: false,
@@ -644,12 +665,27 @@ ipcMain.handle(
 )
 ipcMain.handle('overlay:quit', () => app.quit())
 
-app.whenReady().then(async () => {
-  await loadAnchor()
-  createWindow()
-  startWatcher()
-  void loadNativeLabels()
-})
+const hasSingleInstanceLock = !app.isPackaged || app.requestSingleInstanceLock()
+if (!hasSingleInstanceLock) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return
+    setPaletteOpen(true)
+    if (codexVisible) {
+      mainWindow.showInactive()
+      mainWindow.moveTop()
+    }
+  })
+
+  app.whenReady().then(async () => {
+    await stopPreviousPackagedPalettes()
+    await loadAnchor()
+    createWindow()
+    startWatcher()
+    void loadNativeLabels()
+  })
+}
 
 app.on('before-quit', () => {
   unregisterPaletteShortcut()

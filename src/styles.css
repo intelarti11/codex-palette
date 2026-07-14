@@ -12,6 +12,7 @@ button { font: inherit; color: inherit; }
 .overlay-closed {
   width: 100%;
   height: var(--selector-height, 28px);
+  background: rgba(255, 255, 255, 0.01);
   user-select: none;
 }
 
