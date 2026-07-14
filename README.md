@@ -55,13 +55,19 @@ npm install
 npm run dev
 ```
 
-To build a Windows installer locally:
+To build the Windows installer and portable executable locally:
 
 ```powershell
 npm run dist
 ```
 
-The NSIS installer is written to `release/`. Windows SmartScreen may display a warning because community builds are not code-signed.
+To build only the installation-free portable executable:
+
+```powershell
+npm run dist:portable
+```
+
+The NSIS installer and portable executable are written to `release/`. Windows SmartScreen may display a warning because community builds are not code-signed.
 
 ## Validate
 

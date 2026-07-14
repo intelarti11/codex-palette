@@ -29,7 +29,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "preview": "vite preview",
-    "dist": "npm run build && electron-builder"
+    "dist": "npm run build && electron-builder",
+    "dist:portable": "npm run build && electron-builder --win portable"
   },
   "dependencies": {
     "lucide-react": "^1.24.0",
@@ -54,6 +55,7 @@
   "build": {
     "appId": "dev.codexpalette.overlay",
     "productName": "Codex Palette Overlay",
+    "electronDist": "node_modules/electron/dist",
     "files": [
       "dist/**/*",
       "dist-electron/**/*",
@@ -69,7 +71,16 @@
       }
     ],
     "win": {
-      "target": "nsis"
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "nsis": {
+      "artifactName": "${productName}-Setup-${version}-${arch}.${ext}"
+    },
+    "portable": {
+      "artifactName": "${productName}-Portable-${version}-${arch}.${ext}"
     }
   }
 }
