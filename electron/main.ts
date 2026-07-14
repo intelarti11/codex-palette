@@ -78,6 +78,7 @@ let nativeLabels: NativeLabels = {
 let nativeLabelsLoad: Promise<void> | null = null
 let nativeLabelsComplete = false
 let nativeLabelsRetryAfter = 0
+let nativeModelIds: string[] = []
 let fastServiceTierId: string | null = null
 let nativeSelectorPresentation = { ...FALLBACK_SELECTOR_PRESENTATION }
 let nativeSelection: NativeSelection | null = null
@@ -182,11 +183,16 @@ function normalizeModelLabel(value: string) {
 }
 
 function setNativeSelectionFromCodex(observed: CodexCurrentSelection) {
+  const matchedModelIdIndex = nativeModelIds.indexOf(observed.modelId)
   const observedLabel = normalizeModelLabel(observed.modelLabel)
   const matchedModelIndex = nativeLabels.models.findIndex(
     (model) => normalizeModelLabel(model) === observedLabel,
   )
-  const modelIndex = matchedModelIndex >= 0 ? matchedModelIndex : observed.modelIndex
+  const modelIndex = matchedModelIdIndex >= 0
+    ? matchedModelIdIndex
+    : matchedModelIndex >= 0
+      ? matchedModelIndex
+      : observed.modelIndex
   if (
     !Number.isInteger(modelIndex)
     || modelIndex < 0
@@ -267,6 +273,7 @@ function loadNativeLabels() {
           broadcastSelectorPresentation()
         }
         if (setNativeLabels({ ...labelsFromModelCatalog(catalog, app.getLocale()), uiStrings })) {
+          nativeModelIds = catalog.map((model) => model.modelId)
           if (currentSelection) setNativeSelectionFromCodex(currentSelection)
           nativeLabelsComplete = true
           startWatcher()
@@ -274,6 +281,7 @@ function loadNativeLabels() {
         }
       }
       if (process.env.CODEX_UIA_SCAN_FALLBACK === '1' && setNativeLabels(await readNativeLabels())) {
+        nativeModelIds = []
         nativeLabelsComplete = true
         startWatcher()
         return
@@ -509,6 +517,7 @@ ipcMain.handle('overlay:enable-silent-mode', async () => {
   if (!result.ok || !Number.isInteger(result.port)) throw new Error('Codex could not be restarted in silent mode.')
   nativeLabelsComplete = false
   nativeLabelsRetryAfter = 0
+  nativeModelIds = []
   fastServiceTierId = null
   for (let attempt = 0; attempt < 20; attempt += 1) {
     if (await getCodexCdpPort()) break
@@ -620,6 +629,7 @@ ipcMain.handle(
       if (cdpPort && modelLabel) {
         try {
           return await applySelectionThroughCodexRenderer(cdpPort, {
+            modelId: nativeModelIds[selection.modelIndex] ?? '',
             modelLabel,
             modelIndex: selection.modelIndex,
             effortIndex: selection.effortIndex,

@@ -1,4 +1,5 @@
 export type DirectSelection = {
+  modelId: string
   modelLabel: string
   modelIndex: number
   effortIndex: number
@@ -17,6 +18,7 @@ export type DirectSpeedResult = {
 }
 
 export type CodexCurrentSelection = {
+  modelId: string
   modelLabel: string
   modelIndex: number
   effortIndex: number
@@ -24,6 +26,7 @@ export type CodexCurrentSelection = {
 }
 
 export type CodexModelCatalogEntry = {
+  modelId: string
   displayName: string
   defaultReasoningEffort: string
   supportedReasoningEfforts: string[]
@@ -96,6 +99,7 @@ export function buildModelCatalogExpression() {
   });
   const models = Array.isArray(response?.data) ? response.data : [];
   return models.filter((model) => model?.hidden !== true).map((model) => ({
+    modelId: String(model?.model ?? ""),
     displayName: String(model?.displayName ?? ""),
     defaultReasoningEffort: String(model?.defaultReasoningEffort ?? ""),
     supportedReasoningEfforts: Array.isArray(model?.supportedReasoningEfforts)
@@ -241,6 +245,7 @@ export function buildCurrentSelectionExpression() {
     throw new Error("Codex returned an incomplete native selector state.");
   }
   return {
+    modelId: String(model.model ?? ""),
     modelLabel: String(model.displayName ?? ""),
     modelIndex,
     effortIndex,
@@ -267,23 +272,35 @@ export function buildSilentSelectionExpression(selection: DirectSelection) {
 
   function findControls() {
     const trigger = document.querySelector('[data-codex-intelligence-trigger="true"]');
-    if (!trigger) return null;
+    if (!trigger) return { modelControls: null, powerControls: null };
     const fiberKey = Object.keys(trigger).find((key) => key.startsWith("__reactFiber$"));
-    if (!fiberKey) return null;
+    if (!fiberKey) return { modelControls: null, powerControls: null };
     let fiber = trigger[fiberKey];
+    let modelControls = null;
+    let powerControls = null;
     for (let hops = 0; fiber && hops < 100; hops += 1, fiber = fiber.return) {
-      const props = fiber.memoizedProps;
-      if (props && typeof props.onSelectModel === "function" && Array.isArray(props.models)) return props;
+      for (const props of [fiber.memoizedProps, fiber.pendingProps]) {
+        if (!props) continue;
+        if (!modelControls && typeof props.onSelectModel === "function" && Array.isArray(props.models)) {
+          modelControls = props;
+        }
+        if (!powerControls && typeof props.onSelectPower === "function" && Array.isArray(props.powerSelections)) {
+          powerControls = props;
+        }
+      }
+      if (modelControls && powerControls) break;
     }
-    return null;
+    return { modelControls, powerControls };
   }
 
-  const controls = findControls();
+  const { modelControls: controls, powerControls } = findControls();
   if (!controls) throw new Error("Codex native model callback was not found.");
   const visibleModels = controls.models.filter((model) => model?.hidden !== true);
   const requestedName = normalize(selection.modelLabel);
-  const model = controls.models.find((candidate) => normalize(candidate?.displayName) === requestedName)
-    ?? controls.models.find((candidate) => normalize(candidate?.displayName).includes(requestedName))
+  const model = (selection.modelId
+    ? controls.models.find((candidate) => candidate?.model === selection.modelId)
+    : null)
+    ?? controls.models.find((candidate) => normalize(candidate?.displayName) === requestedName)
     ?? visibleModels[selection.modelIndex];
   if (!model?.model) throw new Error("Requested Codex model was not found.");
   const supported = Array.isArray(model.supportedReasoningEfforts)
@@ -293,12 +310,17 @@ export function buildSilentSelectionExpression(selection: DirectSelection) {
     throw new Error("Requested Codex model and effort combination is unsupported.");
   }
 
-  const result = controls.onSelectModel(model.model, effort);
+  const powerSelection = powerControls?.powerSelections.find((candidate) =>
+    candidate?.model === model.model && candidate?.reasoningEffort === effort
+  );
+  const result = powerSelection
+    ? powerControls.onSelectPower(powerSelection)
+    : controls.onSelectModel(model.model, effort);
   if (result && typeof result.then === "function") await result;
   let confirmed = false;
   for (let attempt = 0; attempt < 20; attempt += 1) {
     await new Promise((resolve) => setTimeout(resolve, 50));
-    const current = findControls();
+    const current = findControls().modelControls;
     if (current?.model === model.model && current?.reasoningEffort === effort) {
       confirmed = true;
       break;
@@ -428,7 +450,9 @@ export async function getModelCatalogThroughCodexRenderer(port: number): Promise
   return result.filter((entry): entry is CodexModelCatalogEntry => {
     if (typeof entry !== 'object' || entry === null) return false
     const candidate = entry as Partial<CodexModelCatalogEntry>
-    return typeof candidate.displayName === 'string'
+    return typeof candidate.modelId === 'string'
+      && candidate.modelId.length > 0
+      && typeof candidate.displayName === 'string'
       && typeof candidate.defaultReasoningEffort === 'string'
       && Array.isArray(candidate.supportedReasoningEfforts)
       && Array.isArray(candidate.serviceTiers)
@@ -474,7 +498,8 @@ export async function getCurrentSelectionThroughCodexRenderer(port: number): Pro
   if (typeof result !== 'object' || result === null) throw new Error('Codex returned invalid selector state.')
   const selection = result as Partial<CodexCurrentSelection>
   if (
-    typeof selection.modelLabel !== 'string'
+    typeof selection.modelId !== 'string'
+    || typeof selection.modelLabel !== 'string'
     || !Number.isInteger(selection.modelIndex)
     || !Number.isInteger(selection.effortIndex)
     || !Number.isInteger(selection.speedIndex)
