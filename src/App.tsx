@@ -313,7 +313,7 @@ export default function App() {
     return (
       <main className="overlay-closed" style={selectorStyle} onContextMenu={showContextMenu}>
         <button
-          className={`native-trigger${selectedToneClass}`}
+          className={`native-trigger${selectedToneClass}${selectedModelName ? '' : ' activation-trigger'}`}
           type="button"
           onPointerDown={activateClosedTriggerFromPointer}
           onClick={activateClosedTriggerFromKeyboard}

@@ -47,6 +47,20 @@ button { font: inherit; color: inherit; }
 }
 
 .native-trigger:hover { background: var(--native-hover-background, rgba(26, 28, 31, 0.053)); }
+.native-trigger.activation-trigger {
+  border-color: rgba(27, 27, 23, 0.18);
+  background: #ffffff;
+  color: #595950;
+  box-shadow: 0 2px 9px rgba(20, 20, 16, 0.14);
+}
+.native-trigger.activation-trigger:hover { background: #f7f7f3; }
+.native-trigger.activation-trigger:disabled {
+  background: #fff7d9;
+  color: #665315;
+  opacity: 1;
+}
+.native-trigger.activation-trigger .native-model,
+.native-trigger.activation-trigger svg { color: currentColor; }
 .native-trigger.has-model-tone {
   border-color: rgba(var(--rgb), 0.34);
   background: rgba(var(--rgb), 0.13);
